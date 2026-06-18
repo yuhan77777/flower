@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>地圖光圈 - 360° 隨機路徑與視覺化微調器 (GitHub 共享版 v2.0)</title>
+    <title>地圖光圈 - 360° 隨機路徑與視覺化微調器 (GitHub 共享版 v2.1)</title>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
@@ -33,13 +33,13 @@
 
     <div class="flex-grid">
         <div class="col">
-            <label><b>📥 原始花朵中心座標 (每行一組)</b></label>
-            <textarea id="inputCoords">28.491684,77.234032\n28.491848,77.233160\n28.490840,77.232202\n28.490593,77.230594\n28.491450,77.230572\n28.492195,77.230252\n28.491012,77.229270</textarea>
+            <label><b>📥 原始花朵中心座標 (每行一組，例如：25.123456,121.123456)</b></label>
+            <textarea id="inputCoords" placeholder="請在此處貼上你的原始經緯度座標...&#10;每行一組，格式如：&#10;25.123456,121.123456&#10;25.123789,121.123789"></textarea>
         </div>
         
         <div class="col">
             <label><b>📤 最終隨機微調座標結果</b></label>
-            <textarea id="outputCoords" readonly placeholder="隨機方向計算結果會顯示在這裡..."></textarea>
+            <textarea id="outputCoords" readonly placeholder="隨機方向計算與手動調整結果會顯示在這裡..."></textarea>
         </div>
     </div>
 
@@ -48,7 +48,7 @@
         <button class="btn-success" onclick="copyToClipboard()">📋 複製結果座標</button>
     </div>
 
-    <div class="map-hint">💡 <b>手動微調教學：</b>畫布上的 <b style="color:red;">🔴紅點</b> 是花朵中心，藍圈為 55m 光圈範圍。<b style="color:#e67e22;">橘色虛線</b> 為人走軌跡。你可以用滑鼠<b>直接按住拖曳 🟡黃點</b>，右側座標會即時同步更新！</div>
+    <div class="map-hint">💡 <b>手動微調教學：</b>輸入座標並點擊按鈕後，畫布上的 <b style="color:red;">🔴紅點</b> 是花朵中心，藍圈為 55m 光圈範圍。<b style="color:#e67e22;">橘色虛線</b> 為人走軌跡。你可以用滑鼠<b>直接按住拖曳 🟡黃點</b>，右側座標會即時同步更新！</div>
     
     <div id="canvasContainer">
         <canvas id="roadCanvas" width="800" height="450"></canvas>
@@ -56,7 +56,6 @@
 </div>
 
 <script>
-// 確保函數被全局正確定義，絕對不噴 mainProcessor is not defined
 window.mainProcessor = function() {
     var txt = document.getElementById('inputCoords').value.trim();
     if (!txt) { alert('請先輸入原始座標！'); return; }
@@ -69,7 +68,7 @@ window.mainProcessor = function() {
             if (!isNaN(lat) && !isNaN(lng)) raw.push({lat: lat, lng: lng, id: i+1});
         }
     }
-    if (raw.length === 0) { alert('座標格式不正確！'); return; }
+    if (raw.length === 0) { alert('座標格式不正確！格式應為：緯度,經度'); return; }
 
     centers = optimizePath(raw);
     
@@ -157,6 +156,7 @@ canvas.addEventListener('mousemove', function(e) {
 window.addEventListener('mouseup', function() { dragTargetIndex = -1; });
 window.copyToClipboard = function() {
     var v = document.getElementById('outputCoords').value.replace(/\/\/.*$/gm, '').trim();
+    if(!v) { alert('沒有可複製的座標！'); return; }
     navigator.clipboard.writeText(v).then(function() { alert('📋 複製成功！'); });
 };
 </script>
