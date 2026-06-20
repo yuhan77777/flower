@@ -36,7 +36,7 @@
 <body>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 360° 隨機路徑與視覺化微調器 (隨機碎步修正版)</h2>
+    <h2>🗺️ 地圖光圈 - 360° 隨機路徑與視覺化微調器 (全域防卡死版)</h2>
     <p>固定半徑 <strong>55 公尺</strong>。整合「模擬步行插點」機制，使軌跡更自然安全。</p>
 
     <div class="flex-grid">
@@ -52,13 +52,13 @@
     </div>
 
     <div class="btn-group">
-        <button class="btn-primary" onclick="startProcess()">🚀 開始隨機計算並繪製路徑</button>
-        <button class="btn-success" onclick="copyResult()">📋 複製結果座標</button>
+        <button class="btn-primary" onclick="window.startProcess()">🚀 開始隨機計算並繪製路徑</button>
+        <button class="btn-success" onclick="window.copyResult()">📋 複製結果座標</button>
         
         <div class="switch-container">
             <span>🚶‍♂️ 啟用模擬步行插點 (隨機碎步)</span>
             <label class="switch">
-                <input type="checkbox" id="enableWalkStep" checked onchange="processFinalRoute()">
+                <input type="checkbox" id="enableWalkStep" checked onchange="window.processFinalRoute()">
                 <span class="slider"></span>
             </label>
         </div>
@@ -72,12 +72,13 @@
 </div>
 
 <script>
+    // 徹底確保所有函數直接掛載在全域最高級的 window 上
     var canvas = document.getElementById('roadCanvas');
     var ctx = canvas.getContext('2d');
     var centers = []; var offsetPoints = []; var finalPathPoints = []; var dragTargetIndex = -1;
     var scale = 1; var centerX = 0, centerY = 0;
 
-    function startProcess() {
+    window.startProcess = function() {
         var txt = document.getElementById('inputCoords').value.trim();
         if (!txt) { alert('請先輸入原始座標！'); return; }
         
@@ -110,10 +111,10 @@
                 lng: centers[i].lng + Math.cos(ang) * 55 / 99000
             });
         }
-        processFinalRoute();
-    }
+        window.processFinalRoute();
+    };
 
-    function processFinalRoute() {
+    window.processFinalRoute = function() {
         var isWalkEnabled = document.getElementById('enableWalkStep').checked;
         finalPathPoints = [];
         if (offsetPoints.length === 0) return;
@@ -144,7 +145,7 @@
             }
         }
         updateText(); draw();
-    }
+    };
 
     function getDistanceSq(p1, p2) { return Math.pow(p1.lat - p2.lat, 2) + Math.pow(p1.lng - p2.lng, 2); }
     function optimizePath(list) {
@@ -188,5 +189,3 @@
             var ox = (finalPathPoints[i].lng - centerX) * scale + canvas.width / 2;
             var oy = canvas.height / 2 - (finalPathPoints[i].lat - centerY) * scale;
             ctx.beginPath();
-            if (finalPathPoints[i].isExtraStep) {
-                ctx.arc(ox, oy, 3
