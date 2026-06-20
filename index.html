@@ -36,7 +36,7 @@
 <body>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 360° 隨機路徑與視覺化微調器 (碎步修正版)</h2>
+    <h2>🗺️ 地圖光圈 - 360° 隨機路徑與視覺化微調器 (隨機碎步修正版)</h2>
     <p>固定半徑 <strong>55 公尺</strong>。整合「模擬步行插點」機制，使軌跡更自然安全。</p>
 
     <div class="flex-grid">
@@ -52,13 +52,13 @@
     </div>
 
     <div class="btn-group">
-        <button class="btn-primary" onclick="window.mainProcessor()">🚀 開始隨機計算並繪製路徑</button>
-        <button class="btn-success" onclick="window.copyToClipboard()">📋 複製結果座標</button>
+        <button class="btn-primary" onclick="startProcess()">🚀 開始隨機計算並繪製路徑</button>
+        <button class="btn-success" onclick="copyResult()">📋 複製結果座標</button>
         
         <div class="switch-container">
             <span>🚶‍♂️ 啟用模擬步行插點 (隨機碎步)</span>
             <label class="switch">
-                <input type="checkbox" id="enableWalkStep" checked>
+                <input type="checkbox" id="enableWalkStep" checked onchange="processFinalRoute()">
                 <span class="slider"></span>
             </label>
         </div>
@@ -77,8 +77,7 @@
     var centers = []; var offsetPoints = []; var finalPathPoints = []; var dragTargetIndex = -1;
     var scale = 1; var centerX = 0, centerY = 0;
 
-    // 將主要執行指令綁定到 window 全域，防範 "is not defined" 錯誤
-    window.mainProcessor = function() {
+    function startProcess() {
         var txt = document.getElementById('inputCoords').value.trim();
         if (!txt) { alert('請先輸入原始座標！'); return; }
         
@@ -94,7 +93,7 @@
 
         centers = optimizePath(raw);
         
-        var lats = centers.map(c => c.lat), lngs = centers.map(c => c.lng);
+        var lats = centers.map(function(c) { return c.lat; }), lngs = centers.map(function(c) { return c.lng; });
         centerX = (Math.min.apply(null, lngs) + Math.max.apply(null, lngs)) / 2;
         centerY = (Math.min.apply(null, lats) + Math.max.apply(null, lats)) / 2;
         
@@ -112,13 +111,7 @@
             });
         }
         processFinalRoute();
-    };
-
-    window.copyToClipboard = function() {
-        var v = document.getElementById('outputCoords').value.replace(/\/\/.*$/gm, '').trim();
-        if(!v) { alert('沒有可複製的座標！'); return; }
-        navigator.clipboard.writeText(v).then(function() { alert('📋 複製成功！'); });
-    };
+    }
 
     function processFinalRoute() {
         var isWalkEnabled = document.getElementById('enableWalkStep').checked;
@@ -153,7 +146,7 @@
         updateText(); draw();
     }
 
-    function getDistanceSq(p1, p2) { return (p1.lat - p2.lat)**2 + (p1.lng - p2.lng)**2; }
+    function getDistanceSq(p1, p2) { return Math.pow(p1.lat - p2.lat, 2) + Math.pow(p1.lng - p2.lng, 2); }
     function optimizePath(list) {
         if (list.length <= 2) return list; var unvisited = list.slice(0); var opt = [unvisited.shift()];
         while (unvisited.length > 0) {
@@ -168,7 +161,7 @@
 
     function updateText() {
         var lines = []; for (var i = 0; i < finalPathPoints.length; i++) {
-            var note = finalPathPoints[i].isExtraStep ? ' // 🚶‍♂️ 模擬步行碎步點' : ' // 🎯 第 ' + (lines.filter(l=>!l.includes('碎步')).length + 1) + ' 主站點';
+            var note = finalPathPoints[i].isExtraStep ? ' // 🚶‍♂️ 模擬步行碎步點' : ' // 🎯 第 ' + (lines.filter(function(l){return !l.includes('碎步');}).length + 1) + ' 主站點';
             lines.push(finalPathPoints[i].lat.toFixed(6) + ',' + finalPathPoints[i].lng.toFixed(6) + note);
         }
         document.getElementById('outputCoords').value = lines.join('\n');
@@ -192,4 +185,8 @@
             ctx.stroke(); ctx.setLineDash([]);
         }
         for (var i = 0; i < finalPathPoints.length; i++) {
-            var ox = (finalPat
+            var ox = (finalPathPoints[i].lng - centerX) * scale + canvas.width / 2;
+            var oy = canvas.height / 2 - (finalPathPoints[i].lat - centerY) * scale;
+            ctx.beginPath();
+            if (finalPathPoints[i].isExtraStep) {
+                ctx.arc(ox, oy, 3
