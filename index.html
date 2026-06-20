@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>地圖光圈 - 畫布全功能智慧線段插點編輯器</title>
+    <title>地圖光圈 - 畫布智慧編輯器 (刪除站點保留花苗)</title>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
@@ -49,8 +49,8 @@
         var scale = 1; var centerX = 0, centerY = 0;
         var rInnerPixels = 25; var rOuterPixels = 45;
         var rightClickX = 0, rightClickY = 0; 
-        var rightClickTargetIdx = -1; // 右鍵點在某個黃點上
-        var rightClickInsertIdx = -1; // 右鍵點在某條線段中間
+        var rightClickTargetIdx = -1; 
+        var rightClickInsertIdx = -1; 
 
         window.onload = function() {
             canvas = document.getElementById('roadCanvas');
@@ -81,8 +81,11 @@
         };
 
         function recalculateScaleAndInitPoints(isFirstInit) {
-            if (centers.length === 0) return;
-            var lats = centers.map(function(c) { return c.lat; }), lngs = centers.map(function(c) { return c.lng; });
+            if (centers.length === 0 && offsetPoints.length === 0) return;
+            
+            // 計算視窗中心與縮放（同時參考 centers 與 offsetPoints 以免沒黃點時破圖）
+            var allPts = centers.concat(offsetPoints);
+            var lats = allPts.map(function(c) { return c.lat; }), lngs = allPts.map(function(c) { return c.lng; });
             centerX = (Math.min.apply(null, lngs) + Math.max.apply(null, lngs)) / 2;
             centerY = (Math.min.apply(null, lats) + Math.max.apply(null, lats)) / 2;
             
@@ -116,7 +119,7 @@
 
         window.processFinalRoute = function() {
             finalPathPoints = [];
-            if (offsetPoints.length === 0) return;
+            if (offsetPoints.length === 0) { updateText(); draw(); return; }
             
             var pts = offsetPoints.slice(0);
             if (pts.length < 2) { finalPathPoints = pts; updateText(); draw(); return; }
@@ -173,9 +176,10 @@
         }
 
         function draw() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height); if (centers.length === 0) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (centers.length === 0 && offsetPoints.length === 0) return;
             
-            // 1. 繪製中心點與雙色同心圓
+            // 1. 繪製中心點（花苗）與雙色同心圓 -> 永遠完整保留
             for (var i = 0; i < centers.length; i++) {
                 var cx = (centers[i].lng - centerX) * scale + canvas.width / 2;
                 var cy = canvas.height / 2 - (centers[i].lat - centerY) * scale;
@@ -189,7 +193,7 @@
                 ctx.beginPath(); ctx.arc(cx, cy, 4, 0, 2 * Math.PI); ctx.fillStyle = 'red'; ctx.fill();
                 
                 ctx.fillStyle = '#7f8c8d'; ctx.font = '12px sans-serif';
-                ctx.fillText("序號 " + (i+1), cx - 18, cy - rOuterPixels - 6);
+                ctx.fillText("花苗 " + (i+1), cx - 18, cy - rOuterPixels - 6);
             }
             
             // 2. 繪製橘色圓滑曲線
@@ -216,7 +220,6 @@
             }
         }
 
-        // 點與直線間的距離計算（用來判斷右鍵點擊是不是在兩點連線上）
         function ptToLineDistance(x, y, x1, y1, x2, y2) {
             var A = x - x1; var B = y - y1; var C = x2 - x1; var D = y2 - y1;
             var dot = A * C + B * D; var len_sq = C * C + D * D;
@@ -232,8 +235,7 @@
             return Math.sqrt(dx * dx + dy * dy);
         }
 
-        // --- 🎛️ 右鍵操作選單升級功能 ---
-        // 核心修正：在指定兩點的中間動態插入節點
+        // --- 🎛️ 右鍵智慧選單功能 ---
         window.onInsertNodeBetween = function() {
             if (rightClickInsertIdx === -1) return;
             var mouseLng = (rightClickX - canvas.width / 2) / scale + centerX;
@@ -243,7 +245,6 @@
             var newCenter = { lat: mouseLat, lng: mouseLng, id: newId };
             var newOffset = { lat: mouseLat, lng: mouseLng, id: newId };
             
-            // 插入到指定位置（idx + 1）
             centers.splice(rightClickInsertIdx + 1, 0, newCenter);
             offsetPoints.splice(rightClickInsertIdx + 1, 0, newOffset);
             
@@ -261,12 +262,11 @@
             recalculateScaleAndInitPoints(false);
         };
 
+        // 核心調整：僅刪除黃點（走法站點），完整保留 centers（花苗點）
         window.onDeleteNode = function() {
             if (rightClickTargetIdx === -1) return;
-            var targetId = offsetPoints[rightClickTargetIdx].id;
-            
+            // 只將對應的黃點從 offsetPoints 陣列中抽離，而不去過濾 centers
             offsetPoints.splice(rightClickTargetIdx, 1);
-            centers = centers.filter(function(c) { return c.id !== targetId; });
             
             recalculateScaleAndInitPoints(false);
         };
@@ -281,7 +281,6 @@
                 rightClickTargetIdx = -1;
                 rightClickInsertIdx = -1;
                 
-                // 1. 檢查右鍵是否點在「現有的黃點」上
                 for (var i = 0; i < offsetPoints.length; i++) {
                     var ox = (offsetPoints[i].lng - centerX) * scale + canvas.width / 2;
                     var oy = canvas.height / 2 - (offsetPoints[i].lat - centerY) * scale;
@@ -291,7 +290,6 @@
                     }
                 }
                 
-                // 2. 如果沒點到黃點，檢查是否點在「兩點之間的連線路徑」上
                 if (rightClickTargetIdx === -1 && offsetPoints.length >= 2) {
                     for (var i = 0; i < offsetPoints.length - 1; i++) {
                         var x1 = (offsetPoints[i].lng - centerX) * scale + canvas.width / 2;
@@ -299,7 +297,6 @@
                         var x2 = (offsetPoints[i+1].lng - centerX) * scale + canvas.width / 2;
                         var y2 = canvas.height / 2 - (offsetPoints[i+1].lat - centerY) * scale;
                         
-                        // 如果滑鼠到這條線段的距離小於 10 像素，認定為想在此處插點
                         if (ptToLineDistance(rightClickX, rightClickY, x1, y1, x2, y2) < 10) {
                             rightClickInsertIdx = i;
                             break;
@@ -312,7 +309,6 @@
                 var optInsert = document.getElementById('menuInsert');
                 var optDel = document.getElementById('menuDel');
                 
-                // 根據狀態切換選單內容
                 if (rightClickTargetIdx !== -1) {
                     optAddEnd.style.display = 'none'; optInsert.style.display = 'none'; optDel.style.display = 'block';
                 } else if (rightClickInsertIdx !== -1) {
@@ -368,11 +364,14 @@
                         offsetPoints[dragTargetIndex] = offsetPoints[i];
                         offsetPoints[i] = tempPt;
                         
-                        var tempCenter = centers[dragTargetIndex];
-                        centers[dragTargetIndex] = centers[i];
-                        centers[i] = tempCenter;
+                        // 注意：如果 centers 數量與 offsetPoints 不一致時，不對調 centers 結構避免亂序
+                        if (centers.length === offsetPoints.length) {
+                            var tempCenter = centers[dragTargetIndex];
+                            centers[dragTargetIndex] = centers[i];
+                            centers[i] = tempCenter;
+                        }
                         
-                        alert("🔄 已成功對調這兩個站點的先後順序！");
+                        alert("🔄 已成功對調這兩個走法站點的先後順序！");
                         break;
                     }
                 }
@@ -430,17 +429,17 @@
 <div id="customContextMenu">
     <div id="menuInsert" onclick="window.onInsertNodeBetween()">➕ 在此段中間插入新站點</div>
     <div id="menuAddEnd" onclick="window.onAddNewNodeEnd()">➕ 在末尾新增全新站點</div>
-    <div id="menuDel" onclick="window.onDeleteNode()" style="color:red;">❌ 刪除此站點</div>
+    <div id="menuDel" onclick="window.onDeleteNode()" style="color:red;">❌ 刪除此站點 (保留花苗)</div>
 </div>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 畫布智慧線段插點編輯器</h2>
+    <h2>🗺️ 地圖光圈 - 畫布高階無損編輯器</h2>
     
     <div class="color-legend">
-        <div class="legend-item"><span class="box-black"></span> <span>內圈：花苗 30m</span></div>
+        <div class="legend-item"><span class="box-black"></span> <span>內圈：花苗固定中心 30m</span></div>
         <div class="legend-item"><span class="box-blue"></span> <span>外圈：偏移參考線 55m</span></div>
-        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由路徑（可在任意位置拖曳，重疊可調換順序）</span></div>
-        <div class="legend-item"><span style="color:#2ecc71; font-weight:bold;">💡 密技：</span> <span style="color:#16a085;">在橘色路徑連線上點「滑鼠右鍵」，即可直接在兩點中間塞入新節點！</span></div>
+        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由路徑（可任意拖曳、重疊換位）</span></div>
+        <div class="legend-item"><span style="color:#2ecc71; font-weight:bold;">💡 特色功能：</span> <span style="color:#16a085;">對著黃點按右鍵點「刪除」時，只會抽走路線，花苗紅點和保護圈會完美保留！</span></div>
     </div>
 
     <div class="flex-grid">
