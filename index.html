@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>地圖光圈 - 畫布自由線段插點編輯器 (支援滾輪縮放與平移)</title>
+    <title>地圖光圈 - 畫布自由線段插點編輯器 (支援20m人物光圈)</title>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
@@ -39,6 +39,7 @@
         .color-legend { display: flex; gap: 15px; margin-bottom: 10px; font-size: 14px; flex-wrap: wrap; }
         .legend-item { display: flex; align-items: center; gap: 6px; }
         .box-black { width: 14px; height: 14px; background: rgba(0,0,0,0.1); border: 1.5px solid #000; border-radius: 50%; }
+        .box-green { width: 14px; height: 14px; border: 1.5px dashed #27ae60; border-radius: 50%; }
         .box-blue { width: 14px; height: 14px; background: rgba(52,152,219,0.05); border: 1.5px solid #3498db; border-radius: 50%; }
         
         #customContextMenu { display: none; position: absolute; background: white; border: 1px solid #cbd5e1; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.15); z-index: 1000; width: 190px; }
@@ -52,7 +53,6 @@
         var dragTargetIndex = -1;
         var scale = 1; var centerX = 0, centerY = 0;
         
-        // --- 🔍 新增：畫布視角縮放平移變數 ---
         var viewScale = 1;
         var viewOffsetX = 0;
         var viewOffsetY = 0;
@@ -85,7 +85,7 @@
 
             centers = optimizePath(raw);
             recalculateScaleAndInitPoints(true);
-            window.resetView(); // 初始化時重置視角
+            window.resetView();
         };
 
         function recalculateScaleAndInitPoints(isFirstInit) {
@@ -113,12 +113,8 @@
             window.processFinalRoute();
         }
 
-        // 重置地圖縮放視角按鈕
         window.resetView = function() {
-            viewScale = 1;
-            viewOffsetX = 0;
-            viewOffsetY = 0;
-            draw();
+            viewScale = 1; viewOffsetX = 0; viewOffsetY = 0; draw();
         };
 
         function catmullRomSpline(p0, p1, p2, p3, t) {
@@ -191,22 +187,15 @@
             return opt;
         }
 
-        // 經緯度轉畫布座標 (套用 viewScale 與 viewOffset)
         function toCanvasCoords(lat, lng) {
             var x = (lng - centerX) * scale + canvas.width / 2;
             var y = canvas.height / 2 - (lat - centerY) * scale;
-            return {
-                x: x * viewScale + viewOffsetX,
-                y: y * viewScale + viewOffsetY
-            };
+            return { x: x * viewScale + viewOffsetX, y: y * viewScale + viewOffsetY };
         }
 
-        // 畫布座標還原成經緯度 (逆推 viewScale 與 viewOffset)
         function toMapCoords(cx, cy) {
-            var rawX = (cx - viewOffsetX) / viewScale;
-            var rawY = (cy - viewOffsetY) / viewScale;
-            var lng = (rawX - canvas.width / 2) / scale + centerX;
-            var lat = centerY - (rawY - canvas.height / 2) / scale;
+            var rawX = (cx - viewOffsetX) / viewScale; var rawY = (cy - viewOffsetY) / viewScale;
+            var lng = (rawX - canvas.width / 2) / scale + centerX; var lat = centerY - (rawY - canvas.height / 2) / scale;
             return { lat: lat, lng: lng };
         }
 
@@ -225,23 +214,35 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             if (centers.length === 0 && offsetPoints.length === 0) return;
             
-            var rInnerPixels = (30 / 111000) * scale * viewScale;
-            var rOuterPixels = (55 / 111000) * scale * viewScale;
+            // 計算比例尺像素
+            var rPersonPixels = (20 / 111000) * scale * viewScale; // 20m 人物光圈
+            var rInnerPixels = (30 / 111000) * scale * viewScale;  // 30m 花苗內圈
+            var rOuterPixels = (55 / 111000) * scale * viewScale;  // 55m 偏移外圈
 
-            // 1. 繪製花苗固定中心點與雙色同心圓
+            // 1. 繪製花苗基準及其所有同心光圈
             for (var i = 0; i < centers.length; i++) {
                 var pt = toCanvasCoords(centers[i].lat, centers[i].lng);
                 
+                // (1) 藍色 55m 外圈
                 ctx.beginPath(); ctx.arc(pt.x, pt.y, rOuterPixels, 0, 2 * Math.PI); 
-                ctx.strokeStyle = 'rgba(52,152,219,0.5)'; ctx.fillStyle = 'rgba(52,152,219,0.02)'; ctx.fill(); ctx.stroke();
+                ctx.strokeStyle = 'rgba(52,152,219,0.4)'; ctx.fillStyle = 'rgba(52,152,219,0.01)'; ctx.fill(); ctx.stroke();
                 
+                // (2) 黑色 30m 內圈
                 ctx.beginPath(); ctx.arc(pt.x, pt.y, rInnerPixels, 0, 2 * Math.PI); 
-                ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.fillStyle = 'rgba(0,0,0,0.03)'; ctx.fill(); ctx.stroke();
+                ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.fillStyle = 'rgba(0,0,0,0.02)'; ctx.fill(); ctx.stroke();
                 
+                // (3) 🟢 綠色 20m 人物虛線光圈
+                ctx.save();
+                ctx.beginPath(); ctx.arc(pt.x, pt.y, rPersonPixels, 0, 2 * Math.PI);
+                ctx.setLineDash([5, 5]); // 設定為虛線
+                ctx.strokeStyle = 'rgba(39, 174, 96, 0.6)'; ctx.stroke();
+                ctx.restore();
+                
+                // 中心紅點
                 ctx.beginPath(); ctx.arc(pt.x, pt.y, 4, 0, 2 * Math.PI); ctx.fillStyle = 'red'; ctx.fill();
                 
                 ctx.fillStyle = '#7f8c8d'; ctx.font = '12px sans-serif';
-                ctx.fillText("花苗基準 " + (i+1), pt.x - 22, pt.y - rOuterPixels - 6);
+                ctx.fillText("花苗 " + (i+1), pt.x - 18, pt.y - rOuterPixels - 6);
             }
             
             // 2. 繪製橘色圓滑曲線
@@ -309,34 +310,22 @@
 
         // --- 🖱️ 滑鼠、滾輪與拖曳核心事件處理 ---
         function setupEvents() {
-            // 滾輪縮放系統
             canvas.addEventListener('wheel', function(e) {
                 e.preventDefault();
-                var r = canvas.getBoundingClientRect();
-                var mouseX = e.clientX - r.left;
-                var mouseY = e.clientY - r.top;
-
-                // 計算縮放前的地圖真實座標
+                var r = canvas.getBoundingClientRect(); var mouseX = e.clientX - r.left; var mouseY = e.clientY - r.top;
                 var mapPtBefore = toMapCoords(mouseX, mouseY);
 
-                // 調整縮放倍率
                 if (e.deltaY < 0) viewScale *= 1.1; else viewScale /= 1.1;
-                if (viewScale < 0.2) viewScale = 0.2;
-                if (viewScale > 30) viewScale = 30;
+                if (viewScale < 0.2) viewScale = 0.2; if (viewScale > 30) viewScale = 30;
 
-                // 修正平移量，使縮放焦點對準滑鼠位置
                 var ptAfter = toCanvasCoords(mapPtBefore.lat, mapPtBefore.lng);
-                viewOffsetX += (mouseX - ptAfter.x);
-                viewOffsetY += (mouseY - ptAfter.y);
-
+                viewOffsetX += (mouseX - ptAfter.x); viewOffsetY += (mouseY - ptAfter.y);
                 draw();
             });
 
             canvas.addEventListener('contextmenu', function(e) {
                 e.preventDefault();
-                var r = canvas.getBoundingClientRect();
-                rightClickX = e.clientX - r.left; rightClickY = e.clientY - r.top;
-                
+                var r = canvas.getBoundingClientRect(); rightClickX = e.clientX - r.left; rightClickY = e.clientY - r.top;
                 rightClickTargetIdx = -1; rightClickInsertIdx = -1;
                 
                 for (var i = 0; i < offsetPoints.length; i++) {
@@ -345,7 +334,6 @@
                         rightClickTargetIdx = i; break;
                     }
                 }
-                
                 if (rightClickTargetIdx === -1 && offsetPoints.length >= 2) {
                     for (var i = 0; i < offsetPoints.length - 1; i++) {
                         var pt1 = toCanvasCoords(offsetPoints[i].lat, offsetPoints[i].lng);
@@ -357,10 +345,7 @@
                 }
                 
                 var menu = document.getElementById('customContextMenu');
-                var optAddEnd = document.getElementById('menuAddEnd');
-                var optInsert = document.getElementById('menuInsert');
-                var optDel = document.getElementById('menuDel');
-                
+                var optAddEnd = document.getElementById('menuAddEnd'); var optInsert = document.getElementById('menuInsert'); var optDel = document.getElementById('menuDel');
                 if (rightClickTargetIdx !== -1) {
                     optAddEnd.style.display = 'none'; optInsert.style.display = 'none'; optDel.style.display = 'block';
                 } else if (rightClickInsertIdx !== -1) {
@@ -368,7 +353,6 @@
                 } else {
                     optAddEnd.style.display = 'block'; optInsert.style.display = 'none'; optDel.style.display = 'none';
                 }
-                
                 menu.style.left = e.pageX + 'px'; menu.style.top = e.pageY + 'px'; menu.style.display = 'block';
             });
 
@@ -381,40 +365,25 @@
                     var pt = toCanvasCoords(offsetPoints[i].lat, offsetPoints[i].lng);
                     if (Math.sqrt(Math.pow(mx-pt.x, 2) + Math.pow(my-pt.y, 2)) < 15) { dragTargetIndex = i; break; }
                 }
-
-                // 如果沒點到任何節點，則開啟「畫布平移」模式
                 if (dragTargetIndex === -1) {
-                    isPanning = true;
-                    startPanX = mx - viewOffsetX;
-                    startPanY = my - viewOffsetY;
+                    isPanning = true; startPanX = mx - viewOffsetX; startPanY = my - viewOffsetY;
                     canvas.style.cursor = 'grabbing';
                 }
             });
 
             canvas.addEventListener('mousemove', function(e) {
                 var r = canvas.getBoundingClientRect(); var mx = e.clientX - r.left, my = e.clientY - r.top;
-
                 if (isPanning) {
-                    // 執行畫布平移
-                    viewOffsetX = mx - startPanX;
-                    viewOffsetY = my - startPanY;
-                    draw();
+                    viewOffsetX = mx - startPanX; viewOffsetY = my - startPanY; draw();
                 } else if (dragTargetIndex !== -1) {
-                    // 執行節點拖曳
                     var mapPt = toMapCoords(mx, my);
-                    offsetPoints[dragTargetIndex].lat = mapPt.lat;
-                    offsetPoints[dragTargetIndex].lng = mapPt.lng;
+                    offsetPoints[dragTargetIndex].lat = mapPt.lat; offsetPoints[dragTargetIndex].lng = mapPt.lng;
                     window.processFinalRoute();
                 }
             });
 
             canvas.addEventListener('mouseup', function(e) {
-                if (isPanning) {
-                    isPanning = false;
-                    canvas.style.cursor = 'default';
-                    return;
-                }
-
+                if (isPanning) { isPanning = false; canvas.style.cursor = 'default'; return; }
                 if (dragTargetIndex === -1) return;
                 var r = canvas.getBoundingClientRect(); var mx = e.clientX - r.left, my = e.clientY - r.top;
                 
@@ -422,14 +391,11 @@
                     if (i === dragTargetIndex) continue;
                     var pt = toCanvasCoords(offsetPoints[i].lat, offsetPoints[i].lng);
                     if (Math.sqrt(Math.pow(mx-pt.x, 2) + Math.pow(my-pt.y, 2)) < 25) {
-                        var tempPt = offsetPoints[dragTargetIndex];
-                        offsetPoints[dragTargetIndex] = offsetPoints[i];
-                        offsetPoints[i] = tempPt;
+                        var tempPt = offsetPoints[dragTargetIndex]; offsetPoints[dragTargetIndex] = offsetPoints[i]; offsetPoints[i] = tempPt;
                         alert("🔄 已成功對調這兩個走法站點的先後順序！"); break;
                     }
                 }
-                dragTargetIndex = -1;
-                recalculateScaleAndInitPoints(false);
+                dragTargetIndex = -1; recalculateScaleAndInitPoints(false);
             });
         }
 
@@ -485,13 +451,13 @@
 </div>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 自由線段插點編輯器 (支援滾輪縮放與平移)</h2>
+    <h2>🗺️ 地圖光圈 - 自由線段插點編輯器 (新增 20m 人物光圈)</h2>
     
     <div class="color-legend">
-        <div class="legend-item"><span class="box-black"></span> <span>內圈：花苗固定中心 30m</span></div>
-        <div class="legend-item"><span class="box-blue"></span> <span>外圈：偏移參考線 55m</span></div>
-        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由路徑</span></div>
-        <div class="legend-item"><span style="color:#2ecc71; font-weight:bold;">🔍 操控指南：</span> <span style="color:#2980b9;">【滑鼠滾輪】可放大縮小地圖 ｜ 【滑鼠左鍵拖曳空白處】可平移地圖。</span></div>
+        <div class="legend-item"><span class="box-green"></span> <span style="color:#27ae60; font-weight:bold;">🟢 虛線圈：人物光圈 20m</span></div>
+        <div class="legend-item"><span class="box-black"></span> <span>實線圈：花苗固定內圈 30m</span></div>
+        <div class="legend-item"><span class="box-blue"></span> <span>外圈線：偏移參考外圈 55m</span></div>
+        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由走法路徑</span></div>
     </div>
 
     <div class="flex-grid">
