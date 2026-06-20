@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>地圖光圈 - 畫布高階智慧編輯器 (自由增點不增花苗)</title>
+    <title>地圖光圈 - 畫布自由線段插點編輯器 (前後延伸版)</title>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
@@ -25,6 +25,8 @@
         .btn-primary:hover { background-color: #d35400; }
         .btn-success { background-color: #2ecc71; color: white; padding: 12px 24px; font-size: 15px; }
         .btn-success:hover { background-color: #27ae60; }
+        .btn-info { background-color: #2980b9; color: white; padding: 12px 20px; font-size: 15px; }
+        .btn-info:hover { background-color: #34495e; }
         
         .gpx-section { margin-top: 20px; padding: 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; }
         .gpx-title { font-size: 15px; font-weight: bold; color: #334155; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
@@ -149,6 +151,45 @@
             updateText(); draw();
         };
 
+        // --- ➕ 新增功能：起終點各朝外延伸 1 公尺不碰花苗 ---
+        window.extendEndsBy1Meter = function() {
+            if (offsetPoints.length < 2) { alert('節點數量太少，無法計算延伸方向！'); return; }
+            
+            // 緯度 1公尺約為 1 / 111000, 經度 1公尺約為 1 / 99000
+            var mLat = 1 / 111000;
+            var mLng = 1 / 99000;
+
+            // 1. 起點外延：從 點1 指向 點0 的方向外推
+            var latDiffStart = offsetPoints[0].lat - offsetPoints[1].lat;
+            var lngDiffStart = offsetPoints[0].lng - offsetPoints[1].lng;
+            var lenStart = Math.sqrt(latDiffStart*latDiffStart + lngDiffStart*lngDiffStart) || 0.0001;
+            
+            var extStart = {
+                lat: offsetPoints[0].lat + (latDiffStart / lenStart) * mLat,
+                lng: offsetPoints[0].lng + (lngDiffStart / lenStart) * mLng,
+                id: Date.now() - 100
+            };
+
+            // 2. 終點外延：從 倒數第2點 指向 最後一點 的方向外推
+            var lastIdx = offsetPoints.length - 1;
+            var latDiffEnd = offsetPoints[lastIdx].lat - offsetPoints[lastIdx-1].lat;
+            var lngDiffEnd = offsetPoints[lastIdx].lng - offsetPoints[lastIdx-1].lng;
+            var lenEnd = Math.sqrt(latDiffEnd*latDiffEnd + lngDiffEnd*lngDiffEnd) || 0.0001;
+
+            var extEnd = {
+                lat: offsetPoints[lastIdx].lat + (latDiffEnd / lenEnd) * mLat,
+                lng: offsetPoints[lastIdx].lng + (lngDiffEnd / lenEnd) * mLng,
+                id: Date.now() + 100
+            };
+
+            // 插入回端點陣列 (不新增花苗)
+            offsetPoints.unshift(extStart);
+            offsetPoints.push(extEnd);
+
+            recalculateScaleAndInitPoints(false);
+            alert('🚀 成功！已在起點與終點向外切線延伸 1 公尺節點（無新增花苗點）。');
+        };
+
         function getDistanceSq(p1, p2) { return Math.pow(p1.lat - p2.lat, 2) + Math.pow(p1.lng - p2.lng, 2); }
         function optimizePath(list) {
             if (list.length <= 2) return list; var unvisited = list.slice(0); var opt = [unvisited.shift()];
@@ -178,7 +219,7 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             if (centers.length === 0 && offsetPoints.length === 0) return;
             
-            // 1. 繪製花苗固定中心點與雙色同心圓 (不隨黃點增加而變多)
+            // 1. 繪製花苗固定中心點與雙色同心圓
             for (var i = 0; i < centers.length; i++) {
                 var cx = (centers[i].lng - centerX) * scale + canvas.width / 2;
                 var cy = canvas.height / 2 - (centers[i].lat - centerY) * scale;
@@ -215,9 +256,14 @@
                 if (finalPathPoints[i].isExtraStep) {
                     ctx.arc(ox, oy, 2.5, 0, 2 * Math.PI); ctx.fillStyle = 'rgba(127,137,141,0.6)'; ctx.fill();
                 } else {
-                    ctx.arc(ox, oy, 8, 0, 2 * Math.PI); ctx.fillStyle = '#f1c40f'; ctx.strokeStyle = '#d35400'; ctx.lineWidth = 2; ctx.fill(); ctx.stroke();
+                    // 特殊處理：如果是第 1 個或是最後一個站點，放大並用不同顏色突顯延伸點
+                    if (mainNodeCount === 1 || i === finalPathPoints.length - 1) {
+                        ctx.arc(ox, oy, 9, 0, 2 * Math.PI); ctx.fillStyle = '#2ecc71'; ctx.strokeStyle = '#27ae60';
+                    } else {
+                        ctx.arc(ox, oy, 8, 0, 2 * Math.PI); ctx.fillStyle = '#f1c40f'; ctx.strokeStyle = '#d35400';
+                    }
+                    ctx.lineWidth = 2; ctx.fill(); ctx.stroke();
                     
-                    // 在黃點旁邊標註走法站點序號
                     ctx.fillStyle = '#2c3e50'; ctx.font = 'bold 11px sans-serif';
                     ctx.fillText(mainNodeCount, ox - 4, oy + 4);
                     mainNodeCount++;
@@ -240,14 +286,13 @@
             return Math.sqrt(dx * dx + dy * dy);
         }
 
-        // --- 🎛️ 右鍵智慧選單功能：只增減 offsetPoints (黃點路徑)，不變更 centers (花苗) ---
+        // --- 🎛️ 右鍵智慧選單功能 ---
         window.onInsertNodeBetween = function() {
             if (rightClickInsertIdx === -1) return;
             var mouseLng = (rightClickX - canvas.width / 2) / scale + centerX;
             var mouseLat = centerY - (rightClickY - canvas.height / 2) / scale;
             
             var newOffset = { lat: mouseLat, lng: mouseLng, id: Date.now() };
-            // 僅插入新的走法站點
             offsetPoints.splice(rightClickInsertIdx + 1, 0, newOffset);
             
             recalculateScaleAndInitPoints(false);
@@ -258,7 +303,6 @@
             var mouseLat = centerY - (rightClickY - canvas.height / 2) / scale;
             
             var newOffset = { lat: mouseLat, lng: mouseLng, id: Date.now() };
-            // 僅在末尾追加新的走法站點
             offsetPoints.push(newOffset);
             
             recalculateScaleAndInitPoints(false);
@@ -267,7 +311,6 @@
         window.onDeleteNode = function() {
             if (rightClickTargetIdx === -1) return;
             offsetPoints.splice(rightClickTargetIdx, 1);
-            
             recalculateScaleAndInitPoints(false);
         };
 
@@ -278,15 +321,13 @@
                 var r = canvas.getBoundingClientRect();
                 rightClickX = e.clientX - r.left; rightClickY = e.clientY - r.top;
                 
-                rightClickTargetIdx = -1;
-                rightClickInsertIdx = -1;
+                rightClickTargetIdx = -1; rightClickInsertIdx = -1;
                 
                 for (var i = 0; i < offsetPoints.length; i++) {
                     var ox = (offsetPoints[i].lng - centerX) * scale + canvas.width / 2;
                     var oy = canvas.height / 2 - (offsetPoints[i].lat - centerY) * scale;
                     if (Math.sqrt(Math.pow(rightClickX-ox, 2) + Math.pow(rightClickY-oy, 2)) < 15) {
-                        rightClickTargetIdx = i;
-                        break;
+                        rightClickTargetIdx = i; break;
                     }
                 }
                 
@@ -298,8 +339,7 @@
                         var y2 = canvas.height / 2 - (offsetPoints[i+1].lat - centerY) * scale;
                         
                         if (ptToLineDistance(rightClickX, rightClickY, x1, y1, x2, y2) < 10) {
-                            rightClickInsertIdx = i;
-                            break;
+                            rightClickInsertIdx = i; break;
                         }
                     }
                 }
@@ -317,9 +357,7 @@
                     optAddEnd.style.display = 'block'; optInsert.style.display = 'none'; optDel.style.display = 'none';
                 }
                 
-                menu.style.left = e.pageX + 'px';
-                menu.style.top = e.pageY + 'px';
-                menu.style.display = 'block';
+                menu.style.left = e.pageX + 'px'; menu.style.top = e.pageY + 'px'; menu.style.display = 'block';
             });
 
             canvas.addEventListener('mousedown', function(e) {
@@ -330,10 +368,7 @@
                 for (var i = 0; i < offsetPoints.length; i++) {
                     var ox = (offsetPoints[i].lng - centerX) * scale + canvas.width / 2;
                     var oy = canvas.height / 2 - (offsetPoints[i].lat - centerY) * scale;
-                    if (Math.sqrt(Math.pow(mx-ox, 2) + Math.pow(my-oy, 2)) < 15) { 
-                        dragTargetIndex = i; 
-                        break; 
-                    }
+                    if (Math.sqrt(Math.pow(mx-ox, 2) + Math.pow(my-oy, 2)) < 15) { dragTargetIndex = i; break; }
                 }
             });
 
@@ -346,7 +381,6 @@
                 
                 offsetPoints[dragTargetIndex].lat = mouseLat;
                 offsetPoints[dragTargetIndex].lng = mouseLng;
-                
                 window.processFinalRoute();
             });
 
@@ -363,12 +397,9 @@
                         var tempPt = offsetPoints[dragTargetIndex];
                         offsetPoints[dragTargetIndex] = offsetPoints[i];
                         offsetPoints[i] = tempPt;
-                        
-                        alert("🔄 已成功對調這兩個走法站點的先後順序！");
-                        break;
+                        alert("🔄 已成功對調這兩個走法站點的先後順序！"); break;
                     }
                 }
-                
                 dragTargetIndex = -1;
                 recalculateScaleAndInitPoints(false);
             });
@@ -426,13 +457,13 @@
 </div>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 自由線段插點編輯器</h2>
+    <h2>🗺️ 地圖光圈 - 自由線段插點編輯器 (前後外延版)</h2>
     
     <div class="color-legend">
         <div class="legend-item"><span class="box-black"></span> <span>內圈：花苗固定中心 30m</span></div>
         <div class="legend-item"><span class="box-blue"></span> <span>外圈：偏移參考線 55m</span></div>
-        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由路徑（可任意拖曳、重疊換位）</span></div>
-        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">💡 點擊右鍵：</span> <span style="color:#d35400;">此時不論是「中間插入」或「尾端新增」均只會增加黃點，不影響固定的紅色花苗基準！</span></div>
+        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由路徑</span></div>
+        <div class="legend-item"><span style="color:#2ecc71; font-weight:bold;">🟢 綠色端點：</span> <span style="color:#27ae60;">延伸出來的起終點緩衝區</span></div>
     </div>
 
     <div class="flex-grid">
@@ -449,6 +480,7 @@
 
     <div class="btn-group">
         <button class="btn-primary" onclick="window.startProcess()">🚀 讀取/生成流暢外圈路徑</button>
+        <button class="btn-info" onclick="window.extendEndsBy1Meter()">📏 ➕ 起終點各外延 1 公尺</button>
         <button class="btn-success" onclick="window.copyResult()">📋 複製文字座標</button>
     </div>
 
