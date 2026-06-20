@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>地圖光圈 - 自由拖曳與右鍵智慧編輯器</title>
+    <title>地圖光圈 - 畫布全功能智慧線段插點編輯器</title>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
@@ -37,7 +37,7 @@
         .box-black { width: 14px; height: 14px; background: rgba(0,0,0,0.1); border: 1.5px solid #000; border-radius: 50%; }
         .box-blue { width: 14px; height: 14px; background: rgba(52,152,219,0.05); border: 1.5px solid #3498db; border-radius: 50%; }
         
-        #customContextMenu { display: none; position: absolute; background: white; border: 1px solid #cbd5e1; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.15); z-index: 1000; width: 150px; }
+        #customContextMenu { display: none; position: absolute; background: white; border: 1px solid #cbd5e1; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.15); z-index: 1000; width: 190px; }
         #customContextMenu div { padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: bold; color: #334155; }
         #customContextMenu div:hover { background: #f1f5f9; color: #e67e22; }
     </style>
@@ -48,7 +48,9 @@
         var dragTargetIndex = -1;
         var scale = 1; var centerX = 0, centerY = 0;
         var rInnerPixels = 25; var rOuterPixels = 45;
-        var rightClickX = 0, rightClickY = 0; var rightClickTargetIdx = -1;
+        var rightClickX = 0, rightClickY = 0; 
+        var rightClickTargetIdx = -1; // 右鍵點在某個黃點上
+        var rightClickInsertIdx = -1; // 右鍵點在某條線段中間
 
         window.onload = function() {
             canvas = document.getElementById('roadCanvas');
@@ -97,7 +99,6 @@
                 offsetPoints = [];
                 for (var i = 0; i < centers.length; i++) {
                     var ang = Math.random() * 2 * Math.PI;
-                    // 初始時仍先外推 55m，之後允許自由拖曳
                     offsetPoints.push({
                         lat: centers[i].lat + Math.sin(ang) * (55 / 111000),
                         lng: centers[i].lng + Math.cos(ang) * (55 / 99000),
@@ -108,7 +109,6 @@
             window.processFinalRoute();
         }
 
-        // Catmull-Rom 圓滑曲線演算法
         function catmullRomSpline(p0, p1, p2, p3, t) {
             var t2 = t * t; var t3 = t2 * t;
             return 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
@@ -168,7 +168,6 @@
             }
             document.getElementById('outputCoords').value = lines.join('\n');
             
-            // 同步回原始輸入框
             var rawLines = centers.map(function(c) { return c.lat.toFixed(6) + ',' + c.lng.toFixed(6); });
             document.getElementById('inputCoords').value = rawLines.join('\n');
         }
@@ -181,15 +180,12 @@
                 var cx = (centers[i].lng - centerX) * scale + canvas.width / 2;
                 var cy = canvas.height / 2 - (centers[i].lat - centerY) * scale;
                 
-                // 外圈藍圈（55公尺）
                 ctx.beginPath(); ctx.arc(cx, cy, rOuterPixels, 0, 2 * Math.PI); 
                 ctx.strokeStyle = 'rgba(52,152,219,0.5)'; ctx.fillStyle = 'rgba(52,152,219,0.02)'; ctx.fill(); ctx.stroke();
                 
-                // 內圈黑圈（30公尺）
                 ctx.beginPath(); ctx.arc(cx, cy, rInnerPixels, 0, 2 * Math.PI); 
                 ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.fillStyle = 'rgba(0,0,0,0.03)'; ctx.fill(); ctx.stroke();
                 
-                // 紅色中央花苗點
                 ctx.beginPath(); ctx.arc(cx, cy, 4, 0, 2 * Math.PI); ctx.fillStyle = 'red'; ctx.fill();
                 
                 ctx.fillStyle = '#7f8c8d'; ctx.font = '12px sans-serif';
@@ -220,20 +216,47 @@
             }
         }
 
-        // --- 🎛️ 右鍵操作選單功能 ---
-        window.onAddNewNode = function() {
+        // 點與直線間的距離計算（用來判斷右鍵點擊是不是在兩點連線上）
+        function ptToLineDistance(x, y, x1, y1, x2, y2) {
+            var A = x - x1; var B = y - y1; var C = x2 - x1; var D = y2 - y1;
+            var dot = A * C + B * D; var len_sq = C * C + D * D;
+            var param = -1;
+            if (len_sq != 0) param = dot / len_sq;
+
+            var xx, yy;
+            if (param < 0) { xx = x1; yy = y1; }
+            else if (param > 1) { xx = x2; yy = y2; }
+            else { xx = x1 + param * C; yy = y1 + param * D; }
+
+            var dx = x - xx; var dy = y - yy;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        // --- 🎛️ 右鍵操作選單升級功能 ---
+        // 核心修正：在指定兩點的中間動態插入節點
+        window.onInsertNodeBetween = function() {
+            if (rightClickInsertIdx === -1) return;
             var mouseLng = (rightClickX - canvas.width / 2) / scale + centerX;
             var mouseLat = centerY - (rightClickY - canvas.height / 2) / scale;
             
-            var newCenter = { lat: mouseLat, lng: mouseLng, id: Date.now() };
-            centers.push(newCenter);
+            var newId = Date.now();
+            var newCenter = { lat: mouseLat, lng: mouseLng, id: newId };
+            var newOffset = { lat: mouseLat, lng: mouseLng, id: newId };
             
-            // 新增時，黃點直接定位在滑鼠點擊位置（完全解除綁定）
-            offsetPoints.push({
-                lat: mouseLat,
-                lng: mouseLng,
-                id: newCenter.id
-            });
+            // 插入到指定位置（idx + 1）
+            centers.splice(rightClickInsertIdx + 1, 0, newCenter);
+            offsetPoints.splice(rightClickInsertIdx + 1, 0, newOffset);
+            
+            recalculateScaleAndInitPoints(false);
+        };
+
+        window.onAddNewNodeEnd = function() {
+            var mouseLng = (rightClickX - canvas.width / 2) / scale + centerX;
+            var mouseLat = centerY - (rightClickY - canvas.height / 2) / scale;
+            
+            var newId = Date.now();
+            centers.push({ lat: mouseLat, lng: mouseLng, id: newId });
+            offsetPoints.push({ lat: mouseLat, lng: mouseLng, id: newId });
             
             recalculateScaleAndInitPoints(false);
         };
@@ -256,6 +279,9 @@
                 rightClickX = e.clientX - r.left; rightClickY = e.clientY - r.top;
                 
                 rightClickTargetIdx = -1;
+                rightClickInsertIdx = -1;
+                
+                // 1. 檢查右鍵是否點在「現有的黃點」上
                 for (var i = 0; i < offsetPoints.length; i++) {
                     var ox = (offsetPoints[i].lng - centerX) * scale + canvas.width / 2;
                     var oy = canvas.height / 2 - (offsetPoints[i].lat - centerY) * scale;
@@ -265,14 +291,34 @@
                     }
                 }
                 
+                // 2. 如果沒點到黃點，檢查是否點在「兩點之間的連線路徑」上
+                if (rightClickTargetIdx === -1 && offsetPoints.length >= 2) {
+                    for (var i = 0; i < offsetPoints.length - 1; i++) {
+                        var x1 = (offsetPoints[i].lng - centerX) * scale + canvas.width / 2;
+                        var y1 = canvas.height / 2 - (offsetPoints[i].lat - centerY) * scale;
+                        var x2 = (offsetPoints[i+1].lng - centerX) * scale + canvas.width / 2;
+                        var y2 = canvas.height / 2 - (offsetPoints[i+1].lat - centerY) * scale;
+                        
+                        // 如果滑鼠到這條線段的距離小於 10 像素，認定為想在此處插點
+                        if (ptToLineDistance(rightClickX, rightClickY, x1, y1, x2, y2) < 10) {
+                            rightClickInsertIdx = i;
+                            break;
+                        }
+                    }
+                }
+                
                 var menu = document.getElementById('customContextMenu');
-                var optAdd = document.getElementById('menuAdd');
+                var optAddEnd = document.getElementById('menuAddEnd');
+                var optInsert = document.getElementById('menuInsert');
                 var optDel = document.getElementById('menuDel');
                 
+                // 根據狀態切換選單內容
                 if (rightClickTargetIdx !== -1) {
-                    optAdd.style.display = 'none'; optDel.style.display = 'block';
+                    optAddEnd.style.display = 'none'; optInsert.style.display = 'none'; optDel.style.display = 'block';
+                } else if (rightClickInsertIdx !== -1) {
+                    optAddEnd.style.display = 'none'; optInsert.style.display = 'block'; optDel.style.display = 'none';
                 } else {
-                    optAdd.style.display = 'block'; optDel.style.display = 'none';
+                    optAddEnd.style.display = 'block'; optInsert.style.display = 'none'; optDel.style.display = 'none';
                 }
                 
                 menu.style.left = e.pageX + 'px';
@@ -295,7 +341,6 @@
                 }
             });
 
-            // 移除限制角度與半徑公式，改為完全「隨滑鼠位置自由移動」
             canvas.addEventListener('mousemove', function(e) {
                 if (dragTargetIndex === -1) return;
                 var r = canvas.getBoundingClientRect(); var mx = e.clientX - r.left, my = e.clientY - r.top;
@@ -303,7 +348,6 @@
                 var mouseLng = (mx - canvas.width / 2) / scale + centerX;
                 var mouseLat = centerY - (my - canvas.height / 2) / scale;
                 
-                // 完全自由移動
                 offsetPoints[dragTargetIndex].lat = mouseLat;
                 offsetPoints[dragTargetIndex].lng = mouseLng;
                 
@@ -384,18 +428,19 @@
 <body>
 
 <div id="customContextMenu">
-    <div id="menuAdd" onclick="window.onAddNewNode()">➕ 在此新增站點</div>
+    <div id="menuInsert" onclick="window.onInsertNodeBetween()">➕ 在此段中間插入新站點</div>
+    <div id="menuAddEnd" onclick="window.onAddNewNodeEnd()">➕ 在末尾新增全新站點</div>
     <div id="menuDel" onclick="window.onDeleteNode()" style="color:red;">❌ 刪除此站點</div>
 </div>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 畫布全自由拖曳與右鍵智慧編輯器</h2>
+    <h2>🗺️ 地圖光圈 - 畫布智慧線段插點編輯器</h2>
     
     <div class="color-legend">
         <div class="legend-item"><span class="box-black"></span> <span>內圈：花苗 30m</span></div>
         <div class="legend-item"><span class="box-blue"></span> <span>外圈：偏移參考線 55m</span></div>
-        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由曲線路徑（黃點已解除鎖定，可在任意位置自由拖曳）</span></div>
-        <div class="legend-item"><span style="color:#2ecc71; font-weight:bold;">💡 提示：</span> <span style="color:#16a085;">把黃點拖去跟另一個黃點重疊，依然可以對調路線順序喔！</span></div>
+        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由路徑（可在任意位置拖曳，重疊可調換順序）</span></div>
+        <div class="legend-item"><span style="color:#2ecc71; font-weight:bold;">💡 密技：</span> <span style="color:#16a085;">在橘色路徑連線上點「滑鼠右鍵」，即可直接在兩點中間塞入新節點！</span></div>
     </div>
 
     <div class="flex-grid">
