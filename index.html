@@ -34,12 +34,10 @@
     </style>
 
     <script>
-        // 把變數與函數全部移到最頂端，並直接掛載在最外層的 window 上，徹底根除找不到函數的問題
         var canvas, ctx;
         var centers = []; var offsetPoints = []; var finalPathPoints = []; var dragTargetIndex = -1;
         var scale = 1; var centerX = 0, centerY = 0;
 
-        // 當網頁載入完成後，自動去綁定畫布元件
         window.onload = function() {
             canvas = document.getElementById('roadCanvas');
             ctx = canvas.getContext('2d');
@@ -92,22 +90,26 @@
             } else {
                 for (var i = 0; i < offsetPoints.length; i++) {
                     finalPathPoints.push(offsetPoints[i]);
+                    
                     if (i < offsetPoints.length - 1) {
                         var p1 = offsetPoints[i]; var p2 = offsetPoints[i+1];
                         var dLat = (p2.lat - p1.lat) * 111000; var dLng = (p2.lng - p1.lng) * 99000;
                         var distance = Math.sqrt(dLat*dLat + dLng*dLng);
-                        if (distance > 150) {
-                            var segments = Math.floor(distance / (100 + Math.random() * 50));
-                            for (var j = 1; j < segments; j++) {
-                                var ratio = j / segments;
-                                var jitterLat = (Math.random() - 0.5) * 6 / 111000; 
-                                var jitterLng = (Math.random() - 0.5) * 6 / 99000;
-                                finalPathPoints.push({
-                                    lat: p1.lat + (p2.lat - p1.lat) * ratio + jitterLat,
-                                    lng: p1.lng + (p2.lng - p1.lng) * ratio + jitterLng,
-                                    isExtraStep: true
-                                });
-                            }
+                        
+                        // 【終極修改】移除距離限制，不管相差幾公尺，通通無條件切碎步！
+                        // 依距離自動計算段數，但即使極近，也強制至少切成 2 段（插入 1 個點）以上
+                        var segments = Math.max(2, Math.floor(distance / 25)); 
+                        
+                        for (var j = 1; j < segments; j++) {
+                            var ratio = j / segments;
+                            // 加上 2~4 公尺的微幅隨機模擬左右抖動，讓軌跡看起來自然、不僵硬
+                            var jitterLat = (Math.random() - 0.5) * 3 / 111000; 
+                            var jitterLng = (Math.random() - 0.5) * 3 / 99000;
+                            finalPathPoints.push({
+                                lat: p1.lat + (p2.lat - p1.lat) * ratio + jitterLat,
+                                lng: p1.lng + (p2.lng - p1.lng) * ratio + jitterLng,
+                                isExtraStep: true
+                            });
                         }
                     }
                 }
@@ -129,8 +131,11 @@
         }
 
         function updateText() {
-            var lines = []; for (var i = 0; i < finalPathPoints.length; i++) {
-                var note = finalPathPoints[i].isExtraStep ? ' // 🚶‍♂️ 模擬步行碎步點' : ' // 🎯 第 ' + (lines.filter(function(l){return !l.includes('碎步');}).length + 1) + ' 主站點';
+            var lines = []; 
+            var mainCount = 0;
+            for (var i = 0; i < finalPathPoints.length; i++) {
+                if (!finalPathPoints[i].isExtraStep) mainCount++;
+                var note = finalPathPoints[i].isExtraStep ? ' // 🚶‍♂️ 模擬步行碎步點' : ' // 🎯 第 ' + mainCount + ' 主站點';
                 lines.push(finalPathPoints[i].lat.toFixed(6) + ',' + finalPathPoints[i].lng.toFixed(6) + note);
             }
             document.getElementById('outputCoords').value = lines.join('\n');
@@ -138,14 +143,18 @@
 
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height); if (centers.length === 0) return;
+            
+            // 1. 畫藍色 55m 花朵圈圈與核心紅點
             for (var i = 0; i < centers.length; i++) {
                 var cx = (centers[i].lng - centerX) * scale + canvas.width / 2;
                 var cy = canvas.height / 2 - (centers[i].lat - centerY) * scale;
                 ctx.beginPath(); ctx.arc(cx, cy, 45, 0, 2 * Math.PI); ctx.strokeStyle = 'rgba(52,152,219,0.3)'; ctx.fillStyle = 'rgba(52,152,219,0.01)'; ctx.fill(); ctx.stroke();
                 ctx.beginPath(); ctx.arc(cx, cy, 4, 0, 2 * Math.PI); ctx.fillStyle = 'red'; ctx.fill();
             }
+            
+            // 2. 畫連接虛線（包含碎步點）
             if (finalPathPoints.length > 1) {
-                ctx.beginPath(); ctx.setLineDash([4, 4]); ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.setLineDash([3, 3]); ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 1.5;
                 for (var i = 0; i < finalPathPoints.length; i++) {
                     var ox = (finalPathPoints[i].lng - centerX) * scale + canvas.width / 2;
                     var oy = canvas.height / 2 - (finalPathPoints[i].lat - centerY) * scale;
@@ -153,12 +162,14 @@
                 }
                 ctx.stroke(); ctx.setLineDash([]);
             }
+            
+            // 3. 繪製所有點點（主黃點與灰色碎步點）
             for (var i = 0; i < finalPathPoints.length; i++) {
                 var ox = (finalPathPoints[i].lng - centerX) * scale + canvas.width / 2;
                 var oy = canvas.height / 2 - (finalPathPoints[i].lat - centerY) * scale;
                 ctx.beginPath();
                 if (finalPathPoints[i].isExtraStep) {
-                    ctx.arc(ox, oy, 3, 0, 2 * Math.PI); ctx.fillStyle = '#95a5a6'; ctx.fill();
+                    ctx.arc(ox, oy, 3.5, 0, 2 * Math.PI); ctx.fillStyle = '#7f8c8d'; ctx.fill();
                 } else {
                     ctx.arc(ox, oy, 7, 0, 2 * Math.PI); ctx.fillStyle = '#f1c40f'; ctx.strokeStyle = '#d35400'; ctx.lineWidth = 2; ctx.fill(); ctx.stroke();
                 }
@@ -196,7 +207,7 @@
 <body>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 360° 隨機路徑與視覺化微調器 (極限終結版)</h2>
+    <h2>🗺️ 地圖光圈 - 360° 隨機路徑與視覺化微調器 (全自動強制插點版)</h2>
     <p>固定半徑 <strong>55 公尺</strong>。整合「模擬步行插點」機制，使軌跡更自然安全。</p>
 
     <div class="flex-grid">
