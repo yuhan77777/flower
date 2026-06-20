@@ -9,7 +9,7 @@
     <meta http-equiv="Expires" content="0" />
     
     <style>
-        body { font-family: -apple-system, sans-serif; background-color: #f4f6f9; padding: 20px; max-width: 1000px; margin: 0 auto; }
+        body { font-family: -apple-system, sans-serif; background-color: #f4f6f9; padding: 20px; max-width: 1050px; margin: 0 auto; }
         .container { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
         h2 { color: #2c3e50; border-bottom: 2px solid #e67e22; padding-bottom: 8px; margin-top: 0; }
         .flex-grid { display: flex; gap: 20px; margin-bottom: 20px; }
@@ -17,14 +17,21 @@
         textarea { width: 100%; height: 180px; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-family: monospace; font-size: 13px; }
         #canvasContainer { width: 100%; background: #e5e9f0; border-radius: 8px; border: 2px solid #bdc3c7; margin-top: 10px; display: flex; justify-content: center; overflow: hidden; }
         canvas { background: #ffffff; cursor: default; }
+        
         .btn-group { margin-top: 15px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-        button { padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 15px; display: flex; align-items: center; gap: 6px; }
-        .btn-primary { background-color: #e67e22; color: white; }
+        button { padding: 10px 18px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+        .btn-primary { background-color: #e67e22; color: white; padding: 12px 24px; font-size: 15px; }
         .btn-primary:hover { background-color: #d35400; }
-        .btn-success { background-color: #2ecc71; color: white; }
+        .btn-success { background-color: #2ecc71; color: white; padding: 12px 24px; font-size: 15px; }
         .btn-success:hover { background-color: #27ae60; }
-        .btn-info { background-color: #3498db; color: white; }
-        .btn-info:hover { background-color: #2980b9; }
+        
+        /* GPX 專用下載按鈕區域樣式 */
+        .gpx-section { margin-top: 20px; padding: 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; }
+        .gpx-title { font-size: 15px; font-weight: bold; color: #334155; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+        .gpx-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+        .btn-gpx { background-color: #4f46e5; color: white; justify-content: center; font-size: 13px; }
+        .btn-gpx:hover { background-color: #4338ca; }
+        
         .map-hint { background: #fff3cd; color: #856404; padding: 8px 12px; border-radius: 4px; margin-top: 10px; font-size: 13px; border-left: 4px solid #ffc107; }
         .switch-container { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: bold; color: #2c3e50; background: #edf2f7; padding: 10px 15px; border-radius: 4px; }
         .switch { position: relative; display: inline-block; width: 46px; height: 24px; }
@@ -178,48 +185,53 @@
             navigator.clipboard.writeText(v).then(function() { alert('📋 複製成功！'); });
         };
 
-        // 【新增功能】生成並自動下載相容於 JoyStick, Easy GPS, iAnyGo 等所有外掛軟體的通用 GPX 檔案
-        window.downloadGPX = function() {
-            if (finalPathPoints.length === 0) { alert('請先生成隨機路徑再進行下載！'); return; }
-            
-            var gpx = '<?xml version="1.0" encoding="UTF-8" standalone="no" ?>\n';
-            gpx += '<gpx version="1.1" creator="MapHaloGPS" xmlns="http://www.topografix.com/GPX/1/1">\n';
-            
-            // 1. 生成 <wpt> 區段：針對 JoyStick, Easy GPS Mock, Flashman, 魅影 軟體優化
-            for (var i = 0; i < finalPathPoints.length; i++) {
-                var name = finalPathPoints[i].isExtraStep ? 'WalkStep_' + i : 'MainStation_' + i;
-                gpx += '  <wpt lat="' + finalPathPoints[i].lat.toFixed(6) + '" lon="' + finalPathPoints[i].lng.toFixed(6) + '">\n';
-                gpx += '    <name>' + name + '</name>\n';
-                gpx += '  </wpt>\n';
-            }
-            
-            // 2. 生成 <trk> 區段：針對 iAnyGo, PoGoskill, FakeGPS, Lockito 軟體優化
-            gpx += '  <trk>\n';
-            gpx += '    <name>MOCK_WALK_ROUTE</name>\n';
-            gpx += '    <trkseg>\n';
-            for (var i = 0; i < finalPathPoints.length; i++) {
-                gpx += '      <trkpt lat="' + finalPathPoints[i].lat.toFixed(6) + '" lon="' + finalPathPoints[i].lng.toFixed(6) + '"></trkpt>\n';
-            }
-            gpx += '    </trkseg>\n';
-            gpx += '  </trk>\n';
-            gpx += '</gpx>';
-            
-            // 建立下載連結
-            var blob = new Blob([gpx], { type: 'application/gpx+xml' });
+        // 核心 GPX 檔案產生器基礎函數
+        function executeDownload(filename, content) {
+            var blob = new Blob([content], { type: 'application/gpx+xml;charset=utf-8' });
             var url = URL.createObjectURL(blob);
             var a = document.createElement('a');
+            a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click();
+            document.body.removeChild(a); URL.revokeObjectURL(url);
+        }
+
+        function generateBaseGPX(type, softwareName) {
+            if (finalPathPoints.length === 0) { alert('請先點擊按鈕生成隨機路徑！'); return null; }
+            var gpx = '<?xml version="1.0" encoding="UTF-8"?>\n';
+            gpx += '<gpx version="1.1" creator="' + softwareName + '_Export" xmlns="http://www.topografix.com/GPX/1/1">\n';
             
-            // 檔名加上時間戳記，避免重複覆蓋
-            var date = new Date();
-            var timeStr = date.getFullYear() + String(date.getMonth()+1).padStart(2,'0') + String(date.getDate()).padStart(2,'0') + '_' + String(date.getHours()).padStart(2,'0') + String(date.getMinutes()).padStart(2,'0');
-            
-            a.href = url;
-            a.download = 'Route_' + timeStr + '.gpx';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        };
+            if (type === 'wpt') {
+                // 航點清單型
+                for (var i = 0; i < finalPathPoints.length; i++) {
+                    gpx += '  <wpt lat="' + finalPathPoints[i].lat.toFixed(6) + '" lon="' + finalPathPoints[i].lng.toFixed(6) + '">\n';
+                    gpx += '    <name>' + (finalPathPoints[i].isExtraStep ? 'W_' + i : 'P_' + i) + '</name>\n';
+                    gpx += '  </wpt>\n';
+                }
+            } else if (type === 'trk') {
+                // 軌跡段落型
+                gpx += '  <trk>\n';
+                gpx += '    <name>' + softwareName + '_Route</name>\n';
+                gpx += '    <trkseg>\n';
+                for (var i = 0; i < finalPathPoints.length; i++) {
+                    gpx += '      <trkpt lat="' + finalPathPoints[i].lat.toFixed(6) + '" lon="' + finalPathPoints[i].lng.toFixed(6) + '"></trkpt>\n';
+                }
+                gpx += '    </trkseg>\n';
+                gpx += '  </trk>\n';
+            }
+            gpx += '</gpx>';
+            return gpx;
+        }
+
+        // 8 大定位軟體分開下載的獨立觸發函數
+        window.dl_JoyStick = function() { var g = generateBaseGPX('wpt', 'JoyStick'); if(g) executeDownload('JoyStick_Route.gpx', g); };
+        window.dl_EasyGPS = function() { var g = generateBaseGPX('wpt', 'EasyGPS'); if(g) executeDownload('EasyGPS_Route.gpx', g); };
+        window.dl_Flashman = function() { var g = generateBaseGPX('wpt', 'Flashman'); if(g) executeDownload('Flashman_Route.gpx', g); };
+        window.dl_魅影 = function() { var g = generateBaseGPX('wpt', 'GhostGPS'); if(g) executeDownload('魅影_Route.gpx', g); };
+        
+        window.dl_iAnyGo = function() { var g = generateBaseGPX('trk', 'iAnyGo'); if(g) executeDownload('iAnyGo_Route.gpx', g); };
+        window.dl_PoGoskill = function() { var g = generateBaseGPX('trk', 'PoGoskill'); if(g) executeDownload('PoGoskill_Route.gpx', g); };
+        window.dl_FakeGPS = function() { var g = generateBaseGPX('trk', 'FakeGPS'); if(g) executeDownload('FakeGPS_Route.gpx', g); };
+        window.dl_Lockito = function() { var g = generateBaseGPX('trk', 'Lockito'); if(g) executeDownload('Lockito_Route.gpx', g); };
 
         function setupEvents() {
             canvas.addEventListener('mousedown', function(e) {
@@ -246,13 +258,13 @@
 <body>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 360° 隨機路徑與視覺化微調器 (萬用 GPX 下載版)</h2>
-    <p>固定半徑 <strong>55 公尺</strong>。整合「模擬步行插點」機制，使軌跡更自然安全。</p>
+    <h2>🗺️ 地圖光圈 - 360° 隨機路徑與視覺化微調器 (8大軟體獨立產出版)</h2>
+    <p>固定半徑 <strong>55 公尺</strong>。整合「全自動強制插點」機制，使每一段距離都完美插入碎步點。</p>
 
     <div class="flex-grid">
         <div class="col">
             <label><b>📥 原始花朵中心座標 (每行一組)</b></label>
-            <textarea id="inputCoords" placeholder="請在此處貼上你的原始經緯度座標...&#10;每行一組, 格式如：&#10;25.123456,121.123456"></textarea>
+            <textarea id="inputCoords" placeholder="請在此處貼上你的原始經緯度座標...&#10;每行一組，格式如：&#10;25.123456,121.123456"></textarea>
         </div>
         
         <div class="col">
@@ -264,7 +276,6 @@
     <div class="btn-group">
         <button class="btn-primary" onclick="window.startProcess()">🚀 開始隨機計算並繪製路徑</button>
         <button class="btn-success" onclick="window.copyResult()">📋 複製文字座標</button>
-        <button class="btn-info" onclick="window.downloadGPX()">📥 下載萬用 GPX 檔案</button>
         
         <div class="switch-container">
             <span>🚶‍♂️ 啟用模擬步行插點 (隨機碎步)</span>
@@ -275,7 +286,21 @@
         </div>
     </div>
 
-    <div class="map-hint">💡 <b>相容性指南：</b>此 GPX 檔案已完美測試相容於：<b>GPS JoyStick、Easy GPS Mock、Flashman、iAnyGo、PoGoskill、魅影、FakeGPS、Lockito</b> 等軟體。直接點擊下載即可匯入使用！</div>
+    <div class="gpx-section">
+        <div class="gpx-title">📥 選擇你要匯入的軟體格式下載專用 GPX 檔案：</div>
+        <div class="gpx-grid">
+            <button class="btn-gpx" onclick="window.dl_JoyStick()">📂 JoyStick</button>
+            <button class="btn-gpx" onclick="window.dl_EasyGPS()">📂 Easy GPS Mock</button>
+            <button class="btn-gpx" onclick="window.dl_Flashman()">📂 Flashman</button>
+            <button class="btn-gpx" onclick="window.dl_魅影()">📂 魅影</button>
+            <button class="btn-gpx" onclick="window.dl_iAnyGo()">📂 iAnyGo</button>
+            <button class="btn-gpx" onclick="window.dl_PoGoskill()">📂 PoGoskill</button>
+            <button class="btn-gpx" onclick="window.dl_FakeGPS()">📂 FakeGPS</button>
+            <button class="btn-gpx" onclick="window.dl_Lockito()">📂 Lockito</button>
+        </div>
+    </div>
+
+    <div class="map-hint">💡 <b>操作指南：</b>輸入完原始中心點後，點擊橘色按鈕即可在下方預覽隨機路徑。接著直接在上方灰色區塊點選你正在使用的軟體名稱，即可單獨打包下載最完美適配的 GPX 軌跡檔！</div>
     
     <div id="canvasContainer">
         <canvas id="roadCanvas" width="800" height="450"></canvas>
