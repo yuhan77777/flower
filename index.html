@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>地圖光圈 - 畫布自由線段插點編輯器 (前後延伸版)</title>
+    <title>地圖光圈 - 畫布自由線段插點編輯器 (支援滾輪縮放與平移)</title>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
@@ -27,6 +27,8 @@
         .btn-success:hover { background-color: #27ae60; }
         .btn-info { background-color: #2980b9; color: white; padding: 12px 20px; font-size: 15px; }
         .btn-info:hover { background-color: #34495e; }
+        .btn-secondary { background-color: #7f8c8d; color: white; padding: 12px 20px; font-size: 15px; }
+        .btn-secondary:hover { background-color: #95a5a6; }
         
         .gpx-section { margin-top: 20px; padding: 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; }
         .gpx-title { font-size: 15px; font-weight: bold; color: #334155; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
@@ -49,10 +51,13 @@
         var centers = []; var offsetPoints = []; var finalPathPoints = []; 
         var dragTargetIndex = -1;
         var scale = 1; var centerX = 0, centerY = 0;
-        var rInnerPixels = 25; var rOuterPixels = 45;
-        var rightClickX = 0, rightClickY = 0; 
-        var rightClickTargetIdx = -1; 
-        var rightClickInsertIdx = -1; 
+        
+        // --- 🔍 新增：畫布視角縮放平移變數 ---
+        var viewScale = 1;
+        var viewOffsetX = 0;
+        var viewOffsetY = 0;
+        var isPanning = false;
+        var startPanX = 0, startPanY = 0;
 
         window.onload = function() {
             canvas = document.getElementById('roadCanvas');
@@ -80,6 +85,7 @@
 
             centers = optimizePath(raw);
             recalculateScaleAndInitPoints(true);
+            window.resetView(); // 初始化時重置視角
         };
 
         function recalculateScaleAndInitPoints(isFirstInit) {
@@ -92,12 +98,6 @@
             
             var maxDelta = Math.max(Math.max.apply(null, lngs) - Math.min.apply(null, lngs), (Math.max.apply(null, lats) - Math.min.apply(null, lats)) * 1.1) || 0.001;
             scale = Math.min((canvas.width - 150) / maxDelta, (canvas.height - 150) / maxDelta);
-            
-            rInnerPixels = (30 / 111000) * scale;
-            rOuterPixels = (55 / 111000) * scale;
-            if(rInnerPixels < 15) {
-                scale = (15 * 111000) / 30; rInnerPixels = 15; rOuterPixels = (55 / 111000) * scale;
-            }
 
             if (isFirstInit) {
                 offsetPoints = [];
@@ -112,6 +112,14 @@
             }
             window.processFinalRoute();
         }
+
+        // 重置地圖縮放視角按鈕
+        window.resetView = function() {
+            viewScale = 1;
+            viewOffsetX = 0;
+            viewOffsetY = 0;
+            draw();
+        };
 
         function catmullRomSpline(p0, p1, p2, p3, t) {
             var t2 = t * t; var t3 = t2 * t;
@@ -151,43 +159,23 @@
             updateText(); draw();
         };
 
-        // --- ➕ 新增功能：起終點各朝外延伸 1 公尺不碰花苗 ---
         window.extendEndsBy1Meter = function() {
             if (offsetPoints.length < 2) { alert('節點數量太少，無法計算延伸方向！'); return; }
-            
-            // 緯度 1公尺約為 1 / 111000, 經度 1公尺約為 1 / 99000
-            var mLat = 1 / 111000;
-            var mLng = 1 / 99000;
+            var mLat = 1 / 111000; var mLng = 1 / 99000;
 
-            // 1. 起點外延：從 點1 指向 點0 的方向外推
             var latDiffStart = offsetPoints[0].lat - offsetPoints[1].lat;
             var lngDiffStart = offsetPoints[0].lng - offsetPoints[1].lng;
             var lenStart = Math.sqrt(latDiffStart*latDiffStart + lngDiffStart*lngDiffStart) || 0.0001;
-            
-            var extStart = {
-                lat: offsetPoints[0].lat + (latDiffStart / lenStart) * mLat,
-                lng: offsetPoints[0].lng + (lngDiffStart / lenStart) * mLng,
-                id: Date.now() - 100
-            };
+            var extStart = { lat: offsetPoints[0].lat + (latDiffStart / lenStart) * mLat, lng: offsetPoints[0].lng + (lngDiffStart / lenStart) * mLng, id: Date.now() - 100 };
 
-            // 2. 終點外延：從 倒數第2點 指向 最後一點 的方向外推
             var lastIdx = offsetPoints.length - 1;
             var latDiffEnd = offsetPoints[lastIdx].lat - offsetPoints[lastIdx-1].lat;
             var lngDiffEnd = offsetPoints[lastIdx].lng - offsetPoints[lastIdx-1].lng;
             var lenEnd = Math.sqrt(latDiffEnd*latDiffEnd + lngDiffEnd*lngDiffEnd) || 0.0001;
+            var extEnd = { lat: offsetPoints[lastIdx].lat + (latDiffEnd / lenEnd) * mLat, lng: offsetPoints[lastIdx].lng + (lngDiffEnd / lenEnd) * mLng, id: Date.now() + 100 };
 
-            var extEnd = {
-                lat: offsetPoints[lastIdx].lat + (latDiffEnd / lenEnd) * mLat,
-                lng: offsetPoints[lastIdx].lng + (lngDiffEnd / lenEnd) * mLng,
-                id: Date.now() + 100
-            };
-
-            // 插入回端點陣列 (不新增花苗)
-            offsetPoints.unshift(extStart);
-            offsetPoints.push(extEnd);
-
+            offsetPoints.unshift(extStart); offsetPoints.push(extEnd);
             recalculateScaleAndInitPoints(false);
-            alert('🚀 成功！已在起點與終點向外切線延伸 1 公尺節點（無新增花苗點）。');
         };
 
         function getDistanceSq(p1, p2) { return Math.pow(p1.lat - p2.lat, 2) + Math.pow(p1.lng - p2.lng, 2); }
@@ -203,6 +191,25 @@
             return opt;
         }
 
+        // 經緯度轉畫布座標 (套用 viewScale 與 viewOffset)
+        function toCanvasCoords(lat, lng) {
+            var x = (lng - centerX) * scale + canvas.width / 2;
+            var y = canvas.height / 2 - (lat - centerY) * scale;
+            return {
+                x: x * viewScale + viewOffsetX,
+                y: y * viewScale + viewOffsetY
+            };
+        }
+
+        // 畫布座標還原成經緯度 (逆推 viewScale 與 viewOffset)
+        function toMapCoords(cx, cy) {
+            var rawX = (cx - viewOffsetX) / viewScale;
+            var rawY = (cy - viewOffsetY) / viewScale;
+            var lng = (rawX - canvas.width / 2) / scale + centerX;
+            var lat = centerY - (rawY - canvas.height / 2) / scale;
+            return { lat: lat, lng: lng };
+        }
+
         function updateText() {
             var lines = [];
             for (var i = 0; i < finalPathPoints.length; i++) {
@@ -210,7 +217,6 @@
                 lines.push(finalPathPoints[i].lat.toFixed(6) + ',' + finalPathPoints[i].lng.toFixed(6) + note);
             }
             document.getElementById('outputCoords').value = lines.join('\n');
-            
             var rawLines = centers.map(function(c) { return c.lat.toFixed(6) + ',' + c.lng.toFixed(6); });
             document.getElementById('inputCoords').value = rawLines.join('\n');
         }
@@ -219,30 +225,31 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             if (centers.length === 0 && offsetPoints.length === 0) return;
             
+            var rInnerPixels = (30 / 111000) * scale * viewScale;
+            var rOuterPixels = (55 / 111000) * scale * viewScale;
+
             // 1. 繪製花苗固定中心點與雙色同心圓
             for (var i = 0; i < centers.length; i++) {
-                var cx = (centers[i].lng - centerX) * scale + canvas.width / 2;
-                var cy = canvas.height / 2 - (centers[i].lat - centerY) * scale;
+                var pt = toCanvasCoords(centers[i].lat, centers[i].lng);
                 
-                ctx.beginPath(); ctx.arc(cx, cy, rOuterPixels, 0, 2 * Math.PI); 
+                ctx.beginPath(); ctx.arc(pt.x, pt.y, rOuterPixels, 0, 2 * Math.PI); 
                 ctx.strokeStyle = 'rgba(52,152,219,0.5)'; ctx.fillStyle = 'rgba(52,152,219,0.02)'; ctx.fill(); ctx.stroke();
                 
-                ctx.beginPath(); ctx.arc(cx, cy, rInnerPixels, 0, 2 * Math.PI); 
+                ctx.beginPath(); ctx.arc(pt.x, pt.y, rInnerPixels, 0, 2 * Math.PI); 
                 ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.fillStyle = 'rgba(0,0,0,0.03)'; ctx.fill(); ctx.stroke();
                 
-                ctx.beginPath(); ctx.arc(cx, cy, 4, 0, 2 * Math.PI); ctx.fillStyle = 'red'; ctx.fill();
+                ctx.beginPath(); ctx.arc(pt.x, pt.y, 4, 0, 2 * Math.PI); ctx.fillStyle = 'red'; ctx.fill();
                 
                 ctx.fillStyle = '#7f8c8d'; ctx.font = '12px sans-serif';
-                ctx.fillText("花苗基準 " + (i+1), cx - 22, cy - rOuterPixels - 6);
+                ctx.fillText("花苗基準 " + (i+1), pt.x - 22, pt.y - rOuterPixels - 6);
             }
             
             // 2. 繪製橘色圓滑曲線
             if (finalPathPoints.length > 1) {
                 ctx.beginPath(); ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 2.5;
                 for (var i = 0; i < finalPathPoints.length; i++) {
-                    var ox = (finalPathPoints[i].lng - centerX) * scale + canvas.width / 2;
-                    var oy = canvas.height / 2 - (finalPathPoints[i].lat - centerY) * scale;
-                    if (i === 0) ctx.moveTo(ox, oy); else ctx.lineTo(ox, oy);
+                    var pt = toCanvasCoords(finalPathPoints[i].lat, finalPathPoints[i].lng);
+                    if (i === 0) ctx.moveTo(pt.x, pt.y); else ctx.lineTo(pt.x, pt.y);
                 }
                 ctx.stroke();
             }
@@ -250,22 +257,20 @@
             // 3. 繪製黃點主站點與數字
             var mainNodeCount = 1;
             for (var i = 0; i < finalPathPoints.length; i++) {
-                var ox = (finalPathPoints[i].lng - centerX) * scale + canvas.width / 2;
-                var oy = canvas.height / 2 - (finalPathPoints[i].lat - centerY) * scale;
+                var pt = toCanvasCoords(finalPathPoints[i].lat, finalPathPoints[i].lng);
                 ctx.beginPath();
                 if (finalPathPoints[i].isExtraStep) {
-                    ctx.arc(ox, oy, 2.5, 0, 2 * Math.PI); ctx.fillStyle = 'rgba(127,137,141,0.6)'; ctx.fill();
+                    ctx.arc(pt.x, pt.y, 2.5, 0, 2 * Math.PI); ctx.fillStyle = 'rgba(127,137,141,0.6)'; ctx.fill();
                 } else {
-                    // 特殊處理：如果是第 1 個或是最後一個站點，放大並用不同顏色突顯延伸點
                     if (mainNodeCount === 1 || i === finalPathPoints.length - 1) {
-                        ctx.arc(ox, oy, 9, 0, 2 * Math.PI); ctx.fillStyle = '#2ecc71'; ctx.strokeStyle = '#27ae60';
+                        ctx.arc(pt.x, pt.y, 9, 0, 2 * Math.PI); ctx.fillStyle = '#2ecc71'; ctx.strokeStyle = '#27ae60';
                     } else {
-                        ctx.arc(ox, oy, 8, 0, 2 * Math.PI); ctx.fillStyle = '#f1c40f'; ctx.strokeStyle = '#d35400';
+                        ctx.arc(pt.x, pt.y, 8, 0, 2 * Math.PI); ctx.fillStyle = '#f1c40f'; ctx.strokeStyle = '#d35400';
                     }
                     ctx.lineWidth = 2; ctx.fill(); ctx.stroke();
                     
                     ctx.fillStyle = '#2c3e50'; ctx.font = 'bold 11px sans-serif';
-                    ctx.fillText(mainNodeCount, ox - 4, oy + 4);
+                    ctx.fillText(mainNodeCount, pt.x - 4, pt.y + 4);
                     mainNodeCount++;
                 }
             }
@@ -274,37 +279,25 @@
         function ptToLineDistance(x, y, x1, y1, x2, y2) {
             var A = x - x1; var B = y - y1; var C = x2 - x1; var D = y2 - y1;
             var dot = A * C + B * D; var len_sq = C * C + D * D;
-            var param = -1;
-            if (len_sq != 0) param = dot / len_sq;
-
+            var param = -1; if (len_sq != 0) param = dot / len_sq;
             var xx, yy;
-            if (param < 0) { xx = x1; yy = y1; }
-            else if (param > 1) { xx = x2; yy = y2; }
-            else { xx = x1 + param * C; yy = y1 + param * D; }
-
-            var dx = x - xx; var dy = y - yy;
-            return Math.sqrt(dx * dx + dy * dy);
+            if (param < 0) { xx = x1; yy = y1; } else if (param > 1) { xx = x2; yy = y2; } else { xx = x1 + param * C; yy = y1 + param * D; }
+            return Math.sqrt(Math.pow(x - xx, 2) + Math.pow(y - yy, 2));
         }
 
         // --- 🎛️ 右鍵智慧選單功能 ---
         window.onInsertNodeBetween = function() {
             if (rightClickInsertIdx === -1) return;
-            var mouseLng = (rightClickX - canvas.width / 2) / scale + centerX;
-            var mouseLat = centerY - (rightClickY - canvas.height / 2) / scale;
-            
-            var newOffset = { lat: mouseLat, lng: mouseLng, id: Date.now() };
+            var mapPt = toMapCoords(rightClickX, rightClickY);
+            var newOffset = { lat: mapPt.lat, lng: mapPt.lng, id: Date.now() };
             offsetPoints.splice(rightClickInsertIdx + 1, 0, newOffset);
-            
             recalculateScaleAndInitPoints(false);
         };
 
         window.onAddNewNodeEnd = function() {
-            var mouseLng = (rightClickX - canvas.width / 2) / scale + centerX;
-            var mouseLat = centerY - (rightClickY - canvas.height / 2) / scale;
-            
-            var newOffset = { lat: mouseLat, lng: mouseLng, id: Date.now() };
+            var mapPt = toMapCoords(rightClickX, rightClickY);
+            var newOffset = { lat: mapPt.lat, lng: mapPt.lng, id: Date.now() };
             offsetPoints.push(newOffset);
-            
             recalculateScaleAndInitPoints(false);
         };
 
@@ -314,8 +307,31 @@
             recalculateScaleAndInitPoints(false);
         };
 
-        // --- 🖱️ 滑鼠與拖曳核心事件處理 ---
+        // --- 🖱️ 滑鼠、滾輪與拖曳核心事件處理 ---
         function setupEvents() {
+            // 滾輪縮放系統
+            canvas.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                var r = canvas.getBoundingClientRect();
+                var mouseX = e.clientX - r.left;
+                var mouseY = e.clientY - r.top;
+
+                // 計算縮放前的地圖真實座標
+                var mapPtBefore = toMapCoords(mouseX, mouseY);
+
+                // 調整縮放倍率
+                if (e.deltaY < 0) viewScale *= 1.1; else viewScale /= 1.1;
+                if (viewScale < 0.2) viewScale = 0.2;
+                if (viewScale > 30) viewScale = 30;
+
+                // 修正平移量，使縮放焦點對準滑鼠位置
+                var ptAfter = toCanvasCoords(mapPtBefore.lat, mapPtBefore.lng);
+                viewOffsetX += (mouseX - ptAfter.x);
+                viewOffsetY += (mouseY - ptAfter.y);
+
+                draw();
+            });
+
             canvas.addEventListener('contextmenu', function(e) {
                 e.preventDefault();
                 var r = canvas.getBoundingClientRect();
@@ -324,21 +340,17 @@
                 rightClickTargetIdx = -1; rightClickInsertIdx = -1;
                 
                 for (var i = 0; i < offsetPoints.length; i++) {
-                    var ox = (offsetPoints[i].lng - centerX) * scale + canvas.width / 2;
-                    var oy = canvas.height / 2 - (offsetPoints[i].lat - centerY) * scale;
-                    if (Math.sqrt(Math.pow(rightClickX-ox, 2) + Math.pow(rightClickY-oy, 2)) < 15) {
+                    var pt = toCanvasCoords(offsetPoints[i].lat, offsetPoints[i].lng);
+                    if (Math.sqrt(Math.pow(rightClickX-pt.x, 2) + Math.pow(rightClickY-pt.y, 2)) < 15) {
                         rightClickTargetIdx = i; break;
                     }
                 }
                 
                 if (rightClickTargetIdx === -1 && offsetPoints.length >= 2) {
                     for (var i = 0; i < offsetPoints.length - 1; i++) {
-                        var x1 = (offsetPoints[i].lng - centerX) * scale + canvas.width / 2;
-                        var y1 = canvas.height / 2 - (offsetPoints[i].lat - centerY) * scale;
-                        var x2 = (offsetPoints[i+1].lng - centerX) * scale + canvas.width / 2;
-                        var y2 = canvas.height / 2 - (offsetPoints[i+1].lat - centerY) * scale;
-                        
-                        if (ptToLineDistance(rightClickX, rightClickY, x1, y1, x2, y2) < 10) {
+                        var pt1 = toCanvasCoords(offsetPoints[i].lat, offsetPoints[i].lng);
+                        var pt2 = toCanvasCoords(offsetPoints[i+1].lat, offsetPoints[i+1].lng);
+                        if (ptToLineDistance(rightClickX, rightClickY, pt1.x, pt1.y, pt2.x, pt2.y) < 10) {
                             rightClickInsertIdx = i; break;
                         }
                     }
@@ -366,34 +378,50 @@
                 
                 dragTargetIndex = -1;
                 for (var i = 0; i < offsetPoints.length; i++) {
-                    var ox = (offsetPoints[i].lng - centerX) * scale + canvas.width / 2;
-                    var oy = canvas.height / 2 - (offsetPoints[i].lat - centerY) * scale;
-                    if (Math.sqrt(Math.pow(mx-ox, 2) + Math.pow(my-oy, 2)) < 15) { dragTargetIndex = i; break; }
+                    var pt = toCanvasCoords(offsetPoints[i].lat, offsetPoints[i].lng);
+                    if (Math.sqrt(Math.pow(mx-pt.x, 2) + Math.pow(my-pt.y, 2)) < 15) { dragTargetIndex = i; break; }
+                }
+
+                // 如果沒點到任何節點，則開啟「畫布平移」模式
+                if (dragTargetIndex === -1) {
+                    isPanning = true;
+                    startPanX = mx - viewOffsetX;
+                    startPanY = my - viewOffsetY;
+                    canvas.style.cursor = 'grabbing';
                 }
             });
 
             canvas.addEventListener('mousemove', function(e) {
-                if (dragTargetIndex === -1) return;
                 var r = canvas.getBoundingClientRect(); var mx = e.clientX - r.left, my = e.clientY - r.top;
-                
-                var mouseLng = (mx - canvas.width / 2) / scale + centerX;
-                var mouseLat = centerY - (my - canvas.height / 2) / scale;
-                
-                offsetPoints[dragTargetIndex].lat = mouseLat;
-                offsetPoints[dragTargetIndex].lng = mouseLng;
-                window.processFinalRoute();
+
+                if (isPanning) {
+                    // 執行畫布平移
+                    viewOffsetX = mx - startPanX;
+                    viewOffsetY = my - startPanY;
+                    draw();
+                } else if (dragTargetIndex !== -1) {
+                    // 執行節點拖曳
+                    var mapPt = toMapCoords(mx, my);
+                    offsetPoints[dragTargetIndex].lat = mapPt.lat;
+                    offsetPoints[dragTargetIndex].lng = mapPt.lng;
+                    window.processFinalRoute();
+                }
             });
 
             canvas.addEventListener('mouseup', function(e) {
+                if (isPanning) {
+                    isPanning = false;
+                    canvas.style.cursor = 'default';
+                    return;
+                }
+
                 if (dragTargetIndex === -1) return;
                 var r = canvas.getBoundingClientRect(); var mx = e.clientX - r.left, my = e.clientY - r.top;
                 
                 for (var i = 0; i < offsetPoints.length; i++) {
                     if (i === dragTargetIndex) continue;
-                    var ox = (offsetPoints[i].lng - centerX) * scale + canvas.width / 2;
-                    var oy = canvas.height / 2 - (offsetPoints[i].lat - centerY) * scale;
-                    
-                    if (Math.sqrt(Math.pow(mx-ox, 2) + Math.pow(my-oy, 2)) < 25) {
+                    var pt = toCanvasCoords(offsetPoints[i].lat, offsetPoints[i].lng);
+                    if (Math.sqrt(Math.pow(mx-pt.x, 2) + Math.pow(my-pt.y, 2)) < 25) {
                         var tempPt = offsetPoints[dragTargetIndex];
                         offsetPoints[dragTargetIndex] = offsetPoints[i];
                         offsetPoints[i] = tempPt;
@@ -457,13 +485,13 @@
 </div>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 自由線段插點編輯器 (前後外延版)</h2>
+    <h2>🗺️ 地圖光圈 - 自由線段插點編輯器 (支援滾輪縮放與平移)</h2>
     
     <div class="color-legend">
         <div class="legend-item"><span class="box-black"></span> <span>內圈：花苗固定中心 30m</span></div>
         <div class="legend-item"><span class="box-blue"></span> <span>外圈：偏移參考線 55m</span></div>
         <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由路徑</span></div>
-        <div class="legend-item"><span style="color:#2ecc71; font-weight:bold;">🟢 綠色端點：</span> <span style="color:#27ae60;">延伸出來的起終點緩衝區</span></div>
+        <div class="legend-item"><span style="color:#2ecc71; font-weight:bold;">🔍 操控指南：</span> <span style="color:#2980b9;">【滑鼠滾輪】可放大縮小地圖 ｜ 【滑鼠左鍵拖曳空白處】可平移地圖。</span></div>
     </div>
 
     <div class="flex-grid">
@@ -481,6 +509,7 @@
     <div class="btn-group">
         <button class="btn-primary" onclick="window.startProcess()">🚀 讀取/生成流暢外圈路徑</button>
         <button class="btn-info" onclick="window.extendEndsBy1Meter()">📏 ➕ 起終點各外延 1 公尺</button>
+        <button class="btn-secondary" onclick="window.resetView()">🏠 重設地圖視角</button>
         <button class="btn-success" onclick="window.copyResult()">📋 複製文字座標</button>
     </div>
 
