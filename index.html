@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>地圖光圈 - 畫布自由線段插點編輯器 (支援20m人物光圈)</title>
+    <title>地圖光圈 - 畫布自由線段插點編輯器 (節點綁定紅色光圈版)</title>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
@@ -39,7 +39,7 @@
         .color-legend { display: flex; gap: 15px; margin-bottom: 10px; font-size: 14px; flex-wrap: wrap; }
         .legend-item { display: flex; align-items: center; gap: 6px; }
         .box-black { width: 14px; height: 14px; background: rgba(0,0,0,0.1); border: 1.5px solid #000; border-radius: 50%; }
-        .box-green { width: 14px; height: 14px; border: 1.5px dashed #27ae60; border-radius: 50%; }
+        .box-red-line { width: 14px; height: 14px; border: 1.5px solid #e74c3c; border-radius: 50%; }
         .box-blue { width: 14px; height: 14px; background: rgba(52,152,219,0.05); border: 1.5px solid #3498db; border-radius: 50%; }
         
         #customContextMenu { display: none; position: absolute; background: white; border: 1px solid #cbd5e1; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.15); z-index: 1000; width: 190px; }
@@ -214,38 +214,44 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             if (centers.length === 0 && offsetPoints.length === 0) return;
             
-            // 計算比例尺像素
             var rPersonPixels = (20 / 111000) * scale * viewScale; // 20m 人物光圈
             var rInnerPixels = (30 / 111000) * scale * viewScale;  // 30m 花苗內圈
             var rOuterPixels = (55 / 111000) * scale * viewScale;  // 55m 偏移外圈
 
-            // 1. 繪製花苗基準及其所有同心光圈
+            // 1. 最底層：花苗中心點與其固定環境光圈 (30m & 55m)
             for (var i = 0; i < centers.length; i++) {
                 var pt = toCanvasCoords(centers[i].lat, centers[i].lng);
                 
-                // (1) 藍色 55m 外圈
+                // 藍色 55m 外圈
                 ctx.beginPath(); ctx.arc(pt.x, pt.y, rOuterPixels, 0, 2 * Math.PI); 
                 ctx.strokeStyle = 'rgba(52,152,219,0.4)'; ctx.fillStyle = 'rgba(52,152,219,0.01)'; ctx.fill(); ctx.stroke();
                 
-                // (2) 黑色 30m 內圈
+                // 黑色 30m 內圈
                 ctx.beginPath(); ctx.arc(pt.x, pt.y, rInnerPixels, 0, 2 * Math.PI); 
                 ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.fillStyle = 'rgba(0,0,0,0.02)'; ctx.fill(); ctx.stroke();
                 
-                // (3) 🟢 綠色 20m 人物虛線光圈
-                ctx.save();
-                ctx.beginPath(); ctx.arc(pt.x, pt.y, rPersonPixels, 0, 2 * Math.PI);
-                ctx.setLineDash([5, 5]); // 設定為虛線
-                ctx.strokeStyle = 'rgba(39, 174, 96, 0.6)'; ctx.stroke();
-                ctx.restore();
-                
-                // 中心紅點
+                // 基準中心紅點
                 ctx.beginPath(); ctx.arc(pt.x, pt.y, 4, 0, 2 * Math.PI); ctx.fillStyle = 'red'; ctx.fill();
                 
                 ctx.fillStyle = '#7f8c8d'; ctx.font = '12px sans-serif';
                 ctx.fillText("花苗 " + (i+1), pt.x - 18, pt.y - rOuterPixels - 6);
             }
+
+            // 2. 🌟 新增：將 20m 紅色實線光圈移到「主站點節點」的外圍
+            // 讓它繪製在路徑線條下層，確保不遮擋點本身
+            for (var i = 0; i < finalPathPoints.length; i++) {
+                if (!finalPathPoints[i].isExtraStep) { // 僅針對主站點繪製 20m 光圈
+                    var pt = toCanvasCoords(finalPathPoints[i].lat, finalPathPoints[i].lng);
+                    ctx.beginPath(); 
+                    ctx.arc(pt.x, pt.y, rPersonPixels, 0, 2 * Math.PI);
+                    ctx.strokeStyle = 'rgba(231, 76, 60, 0.45)'; // 紅色實線
+                    ctx.lineWidth = 1.2; 
+                    ctx.stroke();
+                }
+            }
+            ctx.lineWidth = 1; // 重設線寬
             
-            // 2. 繪製橘色圓滑曲線
+            // 3. 中層：繪製橘色圓滑曲線路徑
             if (finalPathPoints.length > 1) {
                 ctx.beginPath(); ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 2.5;
                 for (var i = 0; i < finalPathPoints.length; i++) {
@@ -255,7 +261,7 @@
                 ctx.stroke();
             }
             
-            // 3. 繪製黃點主站點與數字
+            // 4. 最頂層：繪製走法主站點（黃色實心點）與數字
             var mainNodeCount = 1;
             for (var i = 0; i < finalPathPoints.length; i++) {
                 var pt = toCanvasCoords(finalPathPoints[i].lat, finalPathPoints[i].lng);
@@ -263,15 +269,16 @@
                 if (finalPathPoints[i].isExtraStep) {
                     ctx.arc(pt.x, pt.y, 2.5, 0, 2 * Math.PI); ctx.fillStyle = 'rgba(127,137,141,0.6)'; ctx.fill();
                 } else {
+                    // 主站點半徑為 5 (直徑 10)，會完美落在紅色光圈的正中心最上層
                     if (mainNodeCount === 1 || i === finalPathPoints.length - 1) {
-                        ctx.arc(pt.x, pt.y, 9, 0, 2 * Math.PI); ctx.fillStyle = '#2ecc71'; ctx.strokeStyle = '#27ae60';
+                        ctx.arc(pt.x, pt.y, 6.5, 0, 2 * Math.PI); ctx.fillStyle = '#2ecc71'; ctx.strokeStyle = '#27ae60';
                     } else {
-                        ctx.arc(pt.x, pt.y, 8, 0, 2 * Math.PI); ctx.fillStyle = '#f1c40f'; ctx.strokeStyle = '#d35400';
+                        ctx.arc(pt.x, pt.y, 5, 0, 2 * Math.PI); ctx.fillStyle = '#f1c40f'; ctx.strokeStyle = '#d35400';
                     }
-                    ctx.lineWidth = 2; ctx.fill(); ctx.stroke();
+                    ctx.lineWidth = 1.5; ctx.fill(); ctx.stroke();
                     
-                    ctx.fillStyle = '#2c3e50'; ctx.font = 'bold 11px sans-serif';
-                    ctx.fillText(mainNodeCount, pt.x - 4, pt.y + 4);
+                    ctx.fillStyle = '#2c3e50'; ctx.font = 'bold 9px sans-serif';
+                    ctx.fillText(mainNodeCount, pt.x - 3, pt.y + 3);
                     mainNodeCount++;
                 }
             }
@@ -451,13 +458,13 @@
 </div>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 自由線段插點編輯器 (新增 20m 人物光圈)</h2>
+    <h2>🗺️ 地圖光圈 - 自由線段插點編輯器 (節點隨動紅色光圈版)</h2>
     
     <div class="color-legend">
-        <div class="legend-item"><span class="box-green"></span> <span style="color:#27ae60; font-weight:bold;">🟢 虛線圈：人物光圈 20m</span></div>
-        <div class="legend-item"><span class="box-black"></span> <span>實線圈：花苗固定內圈 30m</span></div>
-        <div class="legend-item"><span class="box-blue"></span> <span>外圈線：偏移參考外圈 55m</span></div>
-        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由走法路徑</span></div>
+        <div class="legend-item"><span class="box-red-line"></span> <span style="color:#e74c3c; font-weight:bold;">━ 實線圈：人物光圈 20m (隨主站點移動)</span></div>
+        <div class="legend-item"><span class="box-black"></span> <span>━ 實線圈：花苗固定內圈 30m</span></div>
+        <div class="legend-item"><span class="box-blue"></span> <span>━ 實線圈：偏移參考外圈 55m</span></div>
+        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由走法路徑 (黃色節點為中心擴散紅色光圈)</span></div>
     </div>
 
     <div class="flex-grid">
