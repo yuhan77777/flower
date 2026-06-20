@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>地圖光圈 - 全直覺畫布拖曳與右鍵編輯微調器</title>
+    <title>地圖光圈 - 自由拖曳與右鍵智慧編輯器</title>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
@@ -37,7 +37,6 @@
         .box-black { width: 14px; height: 14px; background: rgba(0,0,0,0.1); border: 1.5px solid #000; border-radius: 50%; }
         .box-blue { width: 14px; height: 14px; background: rgba(52,152,219,0.05); border: 1.5px solid #3498db; border-radius: 50%; }
         
-        /* 自訂右鍵選單樣式 */
         #customContextMenu { display: none; position: absolute; background: white; border: 1px solid #cbd5e1; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.15); z-index: 1000; width: 150px; }
         #customContextMenu div { padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: bold; color: #334155; }
         #customContextMenu div:hover { background: #f1f5f9; color: #e67e22; }
@@ -46,7 +45,7 @@
     <script>
         var canvas, ctx;
         var centers = []; var offsetPoints = []; var finalPathPoints = []; 
-        var dragTargetIndex = -1; var isDraggingForReorder = false;
+        var dragTargetIndex = -1;
         var scale = 1; var centerX = 0, centerY = 0;
         var rInnerPixels = 25; var rOuterPixels = 45;
         var rightClickX = 0, rightClickY = 0; var rightClickTargetIdx = -1;
@@ -56,7 +55,6 @@
             ctx = canvas.getContext('2d');
             setupEvents();
             
-            // 點擊網頁任意處關閉自訂右鍵選單
             document.addEventListener('click', function() {
                 document.getElementById('customContextMenu').style.display = 'none';
             });
@@ -80,7 +78,6 @@
             recalculateScaleAndInitPoints(true);
         };
 
-        // 重新計算縮放並推移點（如果是初次初始化則隨機外推）
         function recalculateScaleAndInitPoints(isFirstInit) {
             if (centers.length === 0) return;
             var lats = centers.map(function(c) { return c.lat; }), lngs = centers.map(function(c) { return c.lng; });
@@ -100,6 +97,7 @@
                 offsetPoints = [];
                 for (var i = 0; i < centers.length; i++) {
                     var ang = Math.random() * 2 * Math.PI;
+                    // 初始時仍先外推 55m，之後允許自由拖曳
                     offsetPoints.push({
                         lat: centers[i].lat + Math.sin(ang) * (55 / 111000),
                         lng: centers[i].lng + Math.cos(ang) * (55 / 99000),
@@ -170,7 +168,7 @@
             }
             document.getElementById('outputCoords').value = lines.join('\n');
             
-            // 同步回原始輸入框（方便隨時檢視與保存）
+            // 同步回原始輸入框
             var rawLines = centers.map(function(c) { return c.lat.toFixed(6) + ',' + c.lng.toFixed(6); });
             document.getElementById('inputCoords').value = rawLines.join('\n');
         }
@@ -183,12 +181,15 @@
                 var cx = (centers[i].lng - centerX) * scale + canvas.width / 2;
                 var cy = canvas.height / 2 - (centers[i].lat - centerY) * scale;
                 
+                // 外圈藍圈（55公尺）
                 ctx.beginPath(); ctx.arc(cx, cy, rOuterPixels, 0, 2 * Math.PI); 
                 ctx.strokeStyle = 'rgba(52,152,219,0.5)'; ctx.fillStyle = 'rgba(52,152,219,0.02)'; ctx.fill(); ctx.stroke();
                 
+                // 內圈黑圈（30公尺）
                 ctx.beginPath(); ctx.arc(cx, cy, rInnerPixels, 0, 2 * Math.PI); 
                 ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.fillStyle = 'rgba(0,0,0,0.03)'; ctx.fill(); ctx.stroke();
                 
+                // 紅色中央花苗點
                 ctx.beginPath(); ctx.arc(cx, cy, 4, 0, 2 * Math.PI); ctx.fillStyle = 'red'; ctx.fill();
                 
                 ctx.fillStyle = '#7f8c8d'; ctx.font = '12px sans-serif';
@@ -224,15 +225,13 @@
             var mouseLng = (rightClickX - canvas.width / 2) / scale + centerX;
             var mouseLat = centerY - (rightClickY - canvas.height / 2) / scale;
             
-            // 新增一個原始花苗中心點
             var newCenter = { lat: mouseLat, lng: mouseLng, id: Date.now() };
             centers.push(newCenter);
             
-            // 自動強制在外圈 55m 上生成黃色主點
-            var ang = Math.random() * 2 * Math.PI;
+            // 新增時，黃點直接定位在滑鼠點擊位置（完全解除綁定）
             offsetPoints.push({
-                lat: mouseLat + Math.sin(ang) * (55 / 111000),
-                lng: mouseLng + Math.cos(ang) * (55 / 99000),
+                lat: mouseLat,
+                lng: mouseLng,
                 id: newCenter.id
             });
             
@@ -251,13 +250,11 @@
 
         // --- 🖱️ 滑鼠與拖曳核心事件處理 ---
         function setupEvents() {
-            // 自訂右鍵選單
             canvas.addEventListener('contextmenu', function(e) {
                 e.preventDefault();
                 var r = canvas.getBoundingClientRect();
                 rightClickX = e.clientX - r.left; rightClickY = e.clientY - r.top;
                 
-                // 檢查右鍵是不是點在現有的黃點上
                 rightClickTargetIdx = -1;
                 for (var i = 0; i < offsetPoints.length; i++) {
                     var ox = (offsetPoints[i].lng - centerX) * scale + canvas.width / 2;
@@ -283,14 +280,11 @@
                 menu.style.display = 'block';
             });
 
-            // 滑鼠按下
             canvas.addEventListener('mousedown', function(e) {
-                if (e.button === 2) return; // 右鍵不理會
+                if (e.button === 2) return;
                 var r = canvas.getBoundingClientRect(); var mx = e.clientX - r.left, my = e.clientY - r.top;
                 
                 dragTargetIndex = -1;
-                isDraggingForReorder = e.shiftKey; // 按著 Shift 點擊可以強制作順序對調，不按則是普通旋轉（也可以直接重疊換位）
-                
                 for (var i = 0; i < offsetPoints.length; i++) {
                     var ox = (offsetPoints[i].lng - centerX) * scale + canvas.width / 2;
                     var oy = canvas.height / 2 - (offsetPoints[i].lat - centerY) * scale;
@@ -301,45 +295,35 @@
                 }
             });
 
-            // 滑鼠拖曳
+            // 移除限制角度與半徑公式，改為完全「隨滑鼠位置自由移動」
             canvas.addEventListener('mousemove', function(e) {
                 if (dragTargetIndex === -1) return;
                 var r = canvas.getBoundingClientRect(); var mx = e.clientX - r.left, my = e.clientY - r.top;
                 
-                var targetId = offsetPoints[dragTargetIndex].id;
-                var ct = centers.find(function(c) { return c.id === targetId; });
-                if(!ct) return;
-
                 var mouseLng = (mx - canvas.width / 2) / scale + centerX;
                 var mouseLat = centerY - (my - canvas.height / 2) / scale;
                 
-                // 普通旋轉微調：限制在 55m 軌道上
-                var angle = Math.atan2((mouseLat - ct.lat) * 111000, (mouseLng - ct.lng) * 99000);
-                offsetPoints[dragTargetIndex].lat = ct.lat + Math.sin(angle) * (55 / 111000);
-                offsetPoints[dragTargetIndex].lng = ct.lng + Math.cos(angle) * (55 / 99000);
+                // 完全自由移動
+                offsetPoints[dragTargetIndex].lat = mouseLat;
+                offsetPoints[dragTargetIndex].lng = mouseLng;
                 
                 window.processFinalRoute();
             });
 
-            // 滑鼠放開（順序對調判斷機制）
             canvas.addEventListener('mouseup', function(e) {
                 if (dragTargetIndex === -1) return;
                 var r = canvas.getBoundingClientRect(); var mx = e.clientX - r.left, my = e.clientY - r.top;
                 
-                // 檢查放開滑鼠時，是不是把這個點疊到了另一個黃點上面
                 for (var i = 0; i < offsetPoints.length; i++) {
                     if (i === dragTargetIndex) continue;
                     var ox = (offsetPoints[i].lng - centerX) * scale + canvas.width / 2;
                     var oy = canvas.height / 2 - (offsetPoints[i].lat - centerY) * scale;
                     
-                    // 如果兩個黃點重疊（距離小於 25 像素），直接對調兩者在路徑中的「先後順序」！
                     if (Math.sqrt(Math.pow(mx-ox, 2) + Math.pow(my-oy, 2)) < 25) {
-                        // 對調 offsetPoints
                         var tempPt = offsetPoints[dragTargetIndex];
                         offsetPoints[dragTargetIndex] = offsetPoints[i];
                         offsetPoints[i] = tempPt;
                         
-                        // 對調對應的 centers 順序
                         var tempCenter = centers[dragTargetIndex];
                         centers[dragTargetIndex] = centers[i];
                         centers[i] = tempCenter;
@@ -405,13 +389,13 @@
 </div>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 畫布直覺拖曳與右鍵智慧編輯器</h2>
+    <h2>🗺️ 地圖光圈 - 畫布全自由拖曳與右鍵智慧編輯器</h2>
     
     <div class="color-legend">
         <div class="legend-item"><span class="box-black"></span> <span>內圈：花苗 30m</span></div>
-        <div class="legend-item"><span class="box-blue"></span> <span>外圈：偏移光圈 55m (點鎖定在此線上)</span></div>
-        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>圓滑流暢路徑線（絕不切入黑圈）</span></div>
-        <div class="legend-item"><span style="color:#2ecc71; font-weight:bold;">💡 密技：</span> <span style="color:#16a085;">滑鼠拖曳黃點「重疊到另一個黃點上」即可直接調換走法順序！</span></div>
+        <div class="legend-item"><span class="box-blue"></span> <span>外圈：偏移參考線 55m</span></div>
+        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由曲線路徑（黃點已解除鎖定，可在任意位置自由拖曳）</span></div>
+        <div class="legend-item"><span style="color:#2ecc71; font-weight:bold;">💡 提示：</span> <span style="color:#16a085;">把黃點拖去跟另一個黃點重疊，依然可以對調路線順序喔！</span></div>
     </div>
 
     <div class="flex-grid">
@@ -427,7 +411,7 @@
     </div>
 
     <div class="btn-group">
-        <button class="btn-primary" onclick="window.startProcess()">🚀 讀取/生成 55m 流暢外圈路徑</button>
+        <button class="btn-primary" onclick="window.startProcess()">🚀 讀取/生成流暢外圈路徑</button>
         <button class="btn-success" onclick="window.copyResult()">📋 複製文字座標</button>
     </div>
 
