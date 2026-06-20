@@ -3,19 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>地圖光圈 - 雙色同心圓邊緣繞行微調器 (55m修正版)</title>
+    <title>地圖光圈 - 圓滑曲線與自訂順序微調器</title>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     
     <style>
-        body { font-family: -apple-system, sans-serif; background-color: #f4f6f9; padding: 20px; max-width: 1050px; margin: 0 auto; user-select: none; -webkit-user-select: none; }
+        body { font-family: -apple-system, sans-serif; background-color: #f4f6f9; padding: 20px; max-width: 1200px; margin: 0 auto; user-select: none; -webkit-user-select: none; }
         .container { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
         h2 { color: #2c3e50; border-bottom: 2px solid #e67e22; padding-bottom: 8px; margin-top: 0; }
         .flex-grid { display: flex; gap: 20px; margin-bottom: 20px; }
         .col { flex: 1; display: flex; flex-direction: column; }
-        textarea { width: 100%; height: 180px; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-family: monospace; font-size: 13px; }
-        #canvasContainer { width: 100%; background: #e5e9f0; border-radius: 8px; border: 2px solid #bdc3c7; margin-top: 10px; display: flex; justify-content: center; overflow: hidden; }
+        .col-sidebar { flex: 0 0 250px; display: flex; flex-direction: column; }
+        textarea { width: 100%; height: 150px; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-family: monospace; font-size: 13px; }
+        
+        /* 拖曳列表樣式 */
+        .sort-list { border: 1px solid #cbd5e1; border-radius: 6px; background: #f8fafc; padding: 10px; max-height: 460px; overflow-y: auto; }
+        .sort-item { display: flex; align-items: center; background: white; padding: 10px; margin-bottom: 6px; border: 1px solid #e2e8f0; border-radius: 4px; cursor: grab; font-size: 13px; font-weight: bold; color: #334155; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .sort-item:active { cursor: grabbing; background: #bae6fd; }
+        .sort-item.dragging { opacity: 0.5; background: #e0f2fe; }
+        .drag-handle { margin-right: 8px; color: #94a3b8; cursor: grab; font-size: 16px; }
+
+        #canvasContainer { width: 100%; background: #e5e9f0; border-radius: 8px; border: 2px solid #bdc3c7; display: flex; justify-content: center; overflow: hidden; position: relative; }
         canvas { background: #ffffff; cursor: default; }
         
         .btn-group { margin-top: 15px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
@@ -30,14 +39,6 @@
         .gpx-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
         .btn-gpx { background-color: #4f46e5; color: white; justify-content: center; font-size: 13px; }
         .btn-gpx:hover { background-color: #4338ca; }
-        
-        .switch-container { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: bold; color: #2c3e50; background: #edf2f7; padding: 10px 15px; border-radius: 4px; }
-        .switch { position: relative; display: inline-block; width: 46px; height: 24px; }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .3s; border-radius: 24px; }
-        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 4px; bottom: 4px; background-color: white; transition: .3s; border-radius: 50%; }
-        input:checked + .slider { background-color: #2ecc71; }
-        input:checked + .slider:before { transform: translateX(22px); }
         
         .color-legend { display: flex; gap: 15px; margin-bottom: 10px; font-size: 14px; }
         .legend-item { display: flex; align-items: center; gap: 6px; }
@@ -58,8 +59,7 @@
         var canvas, ctx;
         var centers = []; var offsetPoints = []; var finalPathPoints = []; var dragTargetIndex = -1;
         var scale = 1; var centerX = 0, centerY = 0;
-        var rInnerPixels = 25; // 30公尺對應的像素
-        var rOuterPixels = 45; // 55公尺對應的像素
+        var rInnerPixels = 25; var rOuterPixels = 45;
 
         window.onload = function() {
             var currentHost = window.location.hostname;
@@ -82,76 +82,143 @@
                 var p = lines[i].split(',');
                 if (p.length >= 2) {
                     var lat = parseFloat(p[0].trim()), lng = parseFloat(p[1].trim());
-                    if (!isNaN(lat) && !isNaN(lng)) raw.push({lat: lat, lng: lng, id: i+1});
+                    if (!isNaN(lat) && !isNaN(lng)) raw.push({lat: lat, lng: lng, id: i+1, label: '站點 ' + (i+1)});
                 }
             }
             if (raw.length === 0) { alert('座標格式不正確！'); return; }
 
-            // 最佳化路徑排序
+            // 初始自動鄰近排序
             centers = optimizePath(raw);
             
             var lats = centers.map(function(c) { return c.lat; }), lngs = centers.map(function(c) { return c.lng; });
             centerX = (Math.min.apply(null, lngs) + Math.max.apply(null, lngs)) / 2;
             centerY = (Math.min.apply(null, lats) + Math.max.apply(null, lats)) / 2;
             
-            // 計算縮放比例
             var maxDelta = Math.max(Math.max.apply(null, lngs) - Math.min.apply(null, lngs), (Math.max.apply(null, lats) - Math.min.apply(null, lats)) * 1.1) || 0.001;
             scale = Math.min((canvas.width - 150) / maxDelta, (canvas.height - 150) / maxDelta);
             
-            // 根據動態比例計算 30m 與 55m 的實際像素大小
             rInnerPixels = (30 / 111000) * scale;
             rOuterPixels = (55 / 111000) * scale;
-            
-            // 防止縮放過小導致無法選取
             if(rInnerPixels < 15) {
-                scale = (15 * 111000) / 30;
-                rInnerPixels = 15;
-                rOuterPixels = (55 / 111000) * scale;
+                scale = (15 * 111000) / 30; rInnerPixels = 15; rOuterPixels = (55 / 111000) * scale;
             }
 
-            // 初始化：強制將點落在外圈 55 公尺的藍色光圈邊緣上
+            // 強制外推 55m 到外圈藍圈上
             offsetPoints = [];
             for (var i = 0; i < centers.length; i++) {
                 var ang = Math.random() * 2 * Math.PI;
                 offsetPoints.push({
                     lat: centers[i].lat + Math.sin(ang) * (55 / 111000),
                     lng: centers[i].lng + Math.cos(ang) * (55 / 99000),
-                    centerIdx: i
+                    id: centers[i].id,
+                    label: centers[i].label
                 });
             }
+            buildSortList();
             window.processFinalRoute();
         };
 
+        // 建立左側可拖曳調整順序的列表
+        function buildSortList() {
+            var container = document.getElementById('sortableList');
+            container.innerHTML = '';
+            offsetPoints.forEach(function(pt, index) {
+                var item = document.createElement('div');
+                item.className = 'sort-item';
+                item.draggable = true;
+                item.setAttribute('data-id', pt.id);
+                item.innerHTML = '<span class="drag-handle">☰</span>' + pt.label;
+                
+                item.addEventListener('dragstart', function() { item.classList.add('dragging'); });
+                item.addEventListener('dragend', function() { 
+                    item.classList.remove('dragging');
+                    reorderPointsByList();
+                });
+                container.appendChild(item);
+            });
+
+            container.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                var draggingItem = container.querySelector('.dragging');
+                var siblings = Array.from(container.querySelectorAll('.sort-item:not(.dragging)'));
+                var nextSibling = siblings.find(function(sibling) {
+                    return e.clientY <= sibling.getBoundingClientRect().top + sibling.getBoundingClientRect().height / 2;
+                });
+                container.insertBefore(draggingItem, nextSibling);
+            });
+        }
+
+        // 根據列表被拖曳後的新順序，重排 offsetPoints 與 centers
+        function reorderPointsByList() {
+            var items = Array.from(document.querySelectorAll('.sort-item'));
+            var newOffsets = []; var newCenters = [];
+            items.forEach(function(item) {
+                var id = parseInt(item.getAttribute('data-id'));
+                var pt = offsetPoints.find(function(p) { return p.id === id; });
+                var ct = centers.find(function(c) { return c.id === id; });
+                if(pt) newOffsets.push(pt);
+                if(ct) newCenters.push(ct);
+            });
+            offsetPoints = newOffsets;
+            centers = newCenters;
+            window.processFinalRoute();
+        }
+
+        // 卡特姆-羅姆樣條演算法 (Catmull-Rom) 用於產生平滑圓潤的曲線插點
+        function catmullRomSpline(p0, p1, p2, p3, t) {
+            var t2 = t * t; var t3 = t2 * t;
+            return 0.5 * (
+                (2 * p1) +
+                (-p0 + p2) * t +
+                (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+                (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+            );
+        }
+
         window.processFinalRoute = function() {
-            var isWalkEnabled = document.getElementById('enableWalkStep').checked;
             finalPathPoints = [];
             if (offsetPoints.length === 0) return;
             
-            if (!isWalkEnabled) {
-                finalPathPoints = offsetPoints.slice(0);
-            } else {
-                for (var i = 0; i < offsetPoints.length; i++) {
-                    finalPathPoints.push(offsetPoints[i]);
+            // 複製一份端點，並在頭尾補點以利平滑演算法計算
+            var pts = offsetPoints.slice(0);
+            if (pts.length < 2) { finalPathPoints = pts; updateText(); draw(); return; }
+            
+            // 開頭補點 (往回延伸)
+            var pFirst = { lat: pts[0].lat - (pts[1].lat - pts[0].lat), lng: pts[0].lng - (pts[1].lng - pts[0].lng) };
+            // 結尾補點 (往前延伸)
+            var pLast = { lat: pts[pts.length-1].lat + (pts[pts.length-1].lat - pts[pts.length-2].lat), lng: pts[pts.length-1].lng + (pts[pts.length-1].lng - pts[pts.length-2].lng) };
+            
+            pts.unshift(pFirst);
+            pts.push(pLast);
+
+            // 進行曲線插點
+            for (var i = 1; i < pts.length - 2; i++) {
+                var p0 = pts[i-1], p1 = pts[i], p2 = pts[i+1], p3 = pts[i+2];
+                
+                // 根據兩站點間距離動態決定插點密度（每 12 公尺插一點使曲線圓潤）
+                var dLat = (p2.lat - p1.lat) * 111000; var dLng = (p2.lng - p1.lng) * 99000;
+                var dist = Math.sqrt(dLat*dLat + dLng*dLng);
+                var steps = Math.max(8, Math.floor(dist / 12));
+
+                // 塞入主站點本身
+                finalPathPoints.push({ lat: p1.lat, lng: p1.lng, isExtraStep: false });
+
+                // 塞入中間平滑圓弧細節點
+                for (var j = 1; j < steps; j++) {
+                    var t = j / steps;
+                    var cLat = catmullRomSpline(p0.lat, p1.lat, p2.lat, p3.lat, t);
+                    var cLng = catmullRomSpline(p0.lng, p1.lng, p2.lng, p3.lng, t);
                     
-                    if (i < offsetPoints.length - 1) {
-                        var p1 = offsetPoints[i]; var p2 = offsetPoints[i+1];
-                        var dLat = (p2.lat - p1.lat) * 111000; var dLng = (p2.lng - p1.lng) * 99000;
-                        var distance = Math.sqrt(dLat*dLat + dLng*dLng);
-                        
-                        var segments = Math.max(2, Math.floor(distance / 25)); 
-                        for (var j = 1; j < segments; j++) {
-                            var ratio = j / segments;
-                            var jitterLat = (Math.random() - 0.5) * 1.5 / 111000; 
-                            var jitterLng = (Math.random() - 0.5) * 1.5 / 99000;
-                            finalPathPoints.push({
-                                lat: p1.lat + (p2.lat - p1.lat) * ratio + jitterLat,
-                                lng: p1.lng + (p2.lng - p1.lng) * ratio + jitterLng,
-                                isExtraStep: true
-                            });
-                        }
-                    }
+                    // 加入輕微模擬步行碎步微幅抖動
+                    var jitterLat = (Math.random() - 0.5) * 1.0 / 111000;
+                    var jitterLng = (Math.random() - 0.5) * 1.0 / 99000;
+
+                    finalPathPoints.push({ lat: cLat + jitterLat, lng: cLng + jitterLng, isExtraStep: true });
                 }
             }
+            // 補上最後一個主站點
+            finalPathPoints.push({ lat: offsetPoints[offsetPoints.length-1].lat, lng: offsetPoints[offsetPoints.length-1].lng, isExtraStep: false });
+            
             updateText(); draw();
         };
 
@@ -172,7 +239,7 @@
             var lines = []; var mainCount = 0;
             for (var i = 0; i < finalPathPoints.length; i++) {
                 if (!finalPathPoints[i].isExtraStep) mainCount++;
-                var note = finalPathPoints[i].isExtraStep ? ' // 🚶‍♂️ 模擬步行碎步點' : ' // 🎯 第 ' + mainCount + ' 主站點(已偏移55m外圈)';
+                var note = finalPathPoints[i].isExtraStep ? ' // 🚶‍♂️ 曲線平滑步行點' : ' // 🎯 繞行主站點';
                 lines.push(finalPathPoints[i].lat.toFixed(6) + ',' + finalPathPoints[i].lng.toFixed(6) + note);
             }
             document.getElementById('outputCoords').value = lines.join('\n');
@@ -181,42 +248,45 @@
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height); if (centers.length === 0) return;
             
+            // 1. 繪製中心點與雙色同心圓
             for (var i = 0; i < centers.length; i++) {
                 var cx = (centers[i].lng - centerX) * scale + canvas.width / 2;
                 var cy = canvas.height / 2 - (centers[i].lat - centerY) * scale;
                 
-                // 1. 繪製外圈：藍色偏移光圈（55公尺）
+                // 外圈藍圈（55公尺）
                 ctx.beginPath(); ctx.arc(cx, cy, rOuterPixels, 0, 2 * Math.PI); 
-                ctx.strokeStyle = 'rgba(52,152,219,0.5)'; ctx.fillStyle = 'rgba(52,152,219,0.02)'; 
-                ctx.fill(); ctx.stroke();
+                ctx.strokeStyle = 'rgba(52,152,219,0.5)'; ctx.fillStyle = 'rgba(52,152,219,0.02)'; ctx.fill(); ctx.stroke();
                 
-                // 2. 繪製內圈：黑色花苗半徑（30公尺）
+                // 內圈黑圈（30公尺）
                 ctx.beginPath(); ctx.arc(cx, cy, rInnerPixels, 0, 2 * Math.PI); 
-                ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.fillStyle = 'rgba(0,0,0,0.03)'; 
-                ctx.fill(); ctx.stroke();
+                ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.fillStyle = 'rgba(0,0,0,0.03)'; ctx.fill(); ctx.stroke();
                 
-                // 3. 紅色中央苗點
+                // 紅色中央花苗點
                 ctx.beginPath(); ctx.arc(cx, cy, 4, 0, 2 * Math.PI); ctx.fillStyle = 'red'; ctx.fill();
+                
+                // 站點編號標籤
+                ctx.fillStyle = '#7f8c8d'; ctx.font = '11px sans-serif';
+                ctx.fillText(centers[i].label, cx - 15, cy - rOuterPixels - 6);
             }
             
-            // 繪製黃點虛線路徑
+            // 2. 繪製圓滑圓弧路徑線段
             if (finalPathPoints.length > 1) {
-                ctx.beginPath(); ctx.setLineDash([3, 3]); ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 2.5;
                 for (var i = 0; i < finalPathPoints.length; i++) {
                     var ox = (finalPathPoints[i].lng - centerX) * scale + canvas.width / 2;
                     var oy = canvas.height / 2 - (finalPathPoints[i].lat - centerY) * scale;
                     if (i === 0) ctx.moveTo(ox, oy); else ctx.lineTo(ox, oy);
                 }
-                ctx.stroke(); ctx.setLineDash([]);
+                ctx.stroke();
             }
             
-            // 繪製節點
+            // 3. 繪製圓弧上的主黃點與灰色微點
             for (var i = 0; i < finalPathPoints.length; i++) {
                 var ox = (finalPathPoints[i].lng - centerX) * scale + canvas.width / 2;
                 var oy = canvas.height / 2 - (finalPathPoints[i].lat - centerY) * scale;
                 ctx.beginPath();
                 if (finalPathPoints[i].isExtraStep) {
-                    ctx.arc(ox, oy, 3.5, 0, 2 * Math.PI); ctx.fillStyle = '#7f8c8d'; ctx.fill();
+                    ctx.arc(ox, oy, 2.5, 0, 2 * Math.PI); ctx.fillStyle = 'rgba(127,137,141,0.6)'; ctx.fill();
                 } else {
                     ctx.arc(ox, oy, 7, 0, 2 * Math.PI); ctx.fillStyle = '#f1c40f'; ctx.strokeStyle = '#d35400'; ctx.lineWidth = 2; ctx.fill(); ctx.stroke();
                 }
@@ -232,10 +302,8 @@
         function executeDownload(filename, content) {
             var blob = new Blob([content], { type: 'application/gpx+xml;charset=utf-8' });
             var url = URL.createObjectURL(blob);
-            var a = document.createElement('a');
-            a.href = url; a.download = filename;
-            document.body.appendChild(a); a.click();
-            document.body.removeChild(a); URL.revokeObjectURL(url);
+            var a = document.createElement('a'); a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
         }
 
         function generateBaseGPX(type, softwareName) {
@@ -249,17 +317,13 @@
                     gpx += '  </wpt>\n';
                 }
             } else if (type === 'trk') {
-                gpx += '  <trk>\n';
-                gpx += '    <name>' + softwareName + '_Track</name>\n';
-                gpx += '    <trkseg>\n';
+                gpx += '  <trk>\n'; gpx += '    <name>' + softwareName + '_Track</name>\n'; gpx += '    <trkseg>\n';
                 for (var i = 0; i < finalPathPoints.length; i++) {
                     gpx += '      <trkpt lat="' + finalPathPoints[i].lat.toFixed(6) + '" lon="' + finalPathPoints[i].lng.toFixed(6) + '"></trkpt>\n';
                 }
-                gpx += '    </trkseg>\n';
-                gpx += '  </trk>\n';
+                gpx += '    </trkseg>\n'; gpx += '  </trk>\n';
             }
-            gpx += '</gpx>';
-            return gpx;
+            gpx += '</gpx>'; return gpx;
         }
 
         window.dl_JoyStick = function() { var g = generateBaseGPX('wpt', 'JoyStick'); if(g) executeDownload('JoyStick_Route.gpx', g); };
@@ -272,6 +336,7 @@
         window.dl_Lockito = function() { var g = generateBaseGPX('trk', 'Lockito'); if(g) executeDownload('Lockito_Route.gpx', g); };
 
         function setupEvents() {
+            // 滑鼠點下（抓取畫布黃點旋轉微調）
             canvas.addEventListener('mousedown', function(e) {
                 var r = canvas.getBoundingClientRect(); var mx = e.clientX - r.left, my = e.clientY - r.top;
                 for (var i = 0; i < offsetPoints.length; i++) {
@@ -285,17 +350,18 @@
                 if (dragTargetIndex === -1) return;
                 var r = canvas.getBoundingClientRect(); var mx = e.clientX - r.left, my = e.clientY - r.top;
                 
-                var cIdx = offsetPoints[dragTargetIndex].centerIdx;
-                var cLat = centers[cIdx].lat; var cLng = centers[cIdx].lng;
-                
+                // 尋找對應的原始花苗中心
+                var targetId = offsetPoints[dragTargetIndex].id;
+                var ct = centers.find(function(c) { return c.id === targetId; });
+                if(!ct) return;
+
                 var mouseLng = (mx - canvas.width / 2) / scale + centerX;
                 var mouseLat = centerY - (my - canvas.height / 2) / scale;
                 
-                // 強制鎖定角度，且距離精準限制在 55 公尺（外圈藍圈）
-                var angle = Math.atan2((mouseLat - cLat) * 111000, (mouseLng - cLng) * 99000);
-                
-                offsetPoints[dragTargetIndex].lat = cLat + Math.sin(angle) * (55 / 111000);
-                offsetPoints[dragTargetIndex].lng = cLng + Math.cos(angle) * (55 / 99000);
+                // 強制卡在 55 米外圈圓弧軌道上旋轉
+                var angle = Math.atan2((mouseLat - ct.lat) * 111000, (mouseLng - ct.lng) * 99000);
+                offsetPoints[dragTargetIndex].lat = ct.lat + Math.sin(angle) * (55 / 111000);
+                offsetPoints[dragTargetIndex].lng = ct.lng + Math.cos(angle) * (55 / 99000);
                 
                 window.processFinalRoute();
             });
@@ -307,43 +373,36 @@
 <body>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 雙色同心圓邊緣繞行微調器 (55m安全防護版)</h2>
+    <h2>🗺️ 地圖光圈 - 圓滑曲線與自訂順序微調器 (安全防護版)</h2>
     
     <div class="color-legend">
-        <div class="legend-item"><span class="box-black"></span> <span>內圈（黑色）：花苗本體半徑 30 公尺</span></div>
-        <div class="legend-item"><span class="box-blue"></span> <span>外圈（藍色）：偏移繞行光圈 55 公尺</span></div>
+        <div class="legend-item"><span class="box-black"></span> <span>內圈：花苗本體 30m</span></div>
+        <div class="legend-item"><span class="box-blue"></span> <span>外圈：偏移光圈 55m (主點鎖定在此線上)</span></div>
+        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>圓滑路徑線（Catmull-Rom 流暢彎道，絕不切進內圈）</span></div>
     </div>
 
     <div class="flex-grid">
-        <div class="col">
+        <div class="col" style="flex: 1.2;">
             <label><b>📥 原始中心點座標 (每行一組)</b></label>
-            <textarea id="inputCoords" placeholder="請貼上原始經緯度座標...&#10;格式如：&#10;25.123456,121.123456"></textarea>
+            <textarea id="inputCoords" placeholder="請貼上原始經緯度座標...&#10;格式如：25.123456,121.123456"></textarea>
         </div>
         
         <div class="col">
-            <label><b>📤 最終 55m 繞邊插點座標結果</b></label>
+            <label><b>📤 最終流暢繞邊插點結果</b></label>
             <textarea id="outputCoords" readonly placeholder="結果會顯示在這裡..."></textarea>
         </div>
     </div>
 
     <div class="btn-group">
-        <button class="btn-primary" onclick="window.startProcess()">🚀 開始 360° 外推外圈路徑</button>
+        <button class="btn-primary" onclick="window.startProcess()">🚀 生成 55m 流暢外圈路徑</button>
         <button class="btn-success" onclick="window.copyResult()">📋 複製文字座標</button>
-        
-        <div class="switch-container">
-            <span>🚶‍♂️ 啟用模擬步行插點 (隨機碎步)</span>
-            <label class="switch">
-                <input type="checkbox" id="enableWalkStep" checked onchange="window.processFinalRoute()">
-                <span class="slider"></span>
-            </label>
-        </div>
     </div>
 
     <div class="gpx-section">
-        <div class="gpx-title">📥 請選擇專用定位外掛軟體格式進行下載：</div>
+        <div class="gpx-title">📥 請選擇專用定位外掛軟體格式下載：</div>
         <div class="gpx-grid">
             <button class="btn-gpx" onclick="window.dl_JoyStick()">📂 JoyStick</button>
-            <button class="btn-gpx" onclick="window.dl_EasyGPS()">📂 Easy GPS Mock</button>
+            <button class="btn-gpx" onclick="window.dl_EasyGPS()">📂 Easy GPS</button>
             <button class="btn-gpx" onclick="window.dl_Flashman()">📂 Flashman</button>
             <button class="btn-gpx" onclick="window.dl_魅影()">📂 魅影</button>
             <button class="btn-gpx" onclick="window.dl_iAnyGo()">📂 iAnyGo</button>
@@ -353,8 +412,19 @@
         </div>
     </div>
 
-    <div id="canvasContainer">
-        <canvas id="roadCanvas" width="800" height="500"></canvas>
+    <div class="flex-grid" style="margin-top: 20px;">
+        <div class="col-sidebar">
+            <label style="margin-bottom: 6px;"><b>↕️ 拖曳上下調整站點順序：</b></label>
+            <div id="sortableList" class="sort-list">
+                <div style="color:#94a3b8;font-size:13px;text-align:center;padding:20px;">尚無資料，請先按上方生成路徑</div>
+            </div>
+        </div>
+        
+        <div class="col" style="flex: 3;">
+            <div id="canvasContainer">
+                <canvas id="roadCanvas" width="850" height="500"></canvas>
+            </div>
+        </div>
     </div>
 </div>
 
