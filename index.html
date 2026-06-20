@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>地圖光圈 - 畫布自由線段插點編輯器 (節點綁定紅色光圈版)</title>
+    <title>地圖光圈 - 畫布自由線段插點編輯器 (自動最佳化路徑版)</title>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
@@ -21,10 +21,10 @@
         
         .btn-group { margin-top: 15px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
         button { padding: 10px 18px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 14px; display: flex; align-items: center; gap: 6px; }
-        .btn-primary { background-color: #e67e22; color: white; padding: 12px 24px; font-size: 15px; }
-        .btn-primary:hover { background-color: #d35400; }
-        .btn-success { background-color: #2ecc71; color: white; padding: 12px 24px; font-size: 15px; }
-        .btn-success:hover { background-color: #27ae60; }
+        .btn-primary { background-color: #2ecc71; color: white; padding: 12px 24px; font-size: 15px; }
+        .btn-primary:hover { background-color: #27ae60; }
+        .btn-success { background-color: #e67e22; color: white; padding: 12px 24px; font-size: 15px; }
+        .btn-success:hover { background-color: #d35400; }
         .btn-info { background-color: #2980b9; color: white; padding: 12px 20px; font-size: 15px; }
         .btn-info:hover { background-color: #34495e; }
         .btn-secondary { background-color: #7f8c8d; color: white; padding: 12px 20px; font-size: 15px; }
@@ -83,7 +83,10 @@
             }
             if (raw.length === 0) { alert('座標格式不正確！'); return; }
 
+            // 🌟 核心修改：將載入的原始座標「直接進行鄰近最佳化重新排序」，不採用原始輸入順序
             centers = optimizePath(raw);
+            
+            // 重新計算比例並基於最佳化後的 centers 生成對應的初始主站點位置
             recalculateScaleAndInitPoints(true);
             window.resetView();
         };
@@ -101,6 +104,7 @@
 
             if (isFirstInit) {
                 offsetPoints = [];
+                // 基於已經最佳化排列好的 centers，依序向外偏移生成初始站點位置
                 for (var i = 0; i < centers.length; i++) {
                     var ang = Math.random() * 2 * Math.PI;
                     offsetPoints.push({
@@ -175,6 +179,8 @@
         };
 
         function getDistanceSq(p1, p2) { return Math.pow(p1.lat - p2.lat, 2) + Math.pow(p1.lng - p2.lng, 2); }
+        
+        // 鄰近演算法 (Nearest Neighbor)：自動計算並重新排列最短點對點距離
         function optimizePath(list) {
             if (list.length <= 2) return list; var unvisited = list.slice(0); var opt = [unvisited.shift()];
             while (unvisited.length > 0) {
@@ -214,11 +220,11 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             if (centers.length === 0 && offsetPoints.length === 0) return;
             
-            var rPersonPixels = (20 / 111000) * scale * viewScale; // 20m 人物光圈
-            var rInnerPixels = (30 / 111000) * scale * viewScale;  // 30m 花苗內圈
-            var rOuterPixels = (55 / 111000) * scale * viewScale;  // 55m 偏移外圈
+            var rPersonPixels = (20 / 111000) * scale * viewScale; // 20m 主站點人物隨動光圈
+            var rInnerPixels = (30 / 111000) * scale * viewScale;  // 30m 花苗固定內圈
+            var rOuterPixels = (55 / 111000) * scale * viewScale;  // 55m 花苗固定外圈
 
-            // 1. 最底層：花苗中心點與其固定環境光圈 (30m & 55m)
+            // 1. 底層：花苗基準點與環境同心光圈 (30m & 55m)
             for (var i = 0; i < centers.length; i++) {
                 var pt = toCanvasCoords(centers[i].lat, centers[i].lng);
                 
@@ -230,28 +236,26 @@
                 ctx.beginPath(); ctx.arc(pt.x, pt.y, rInnerPixels, 0, 2 * Math.PI); 
                 ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.fillStyle = 'rgba(0,0,0,0.02)'; ctx.fill(); ctx.stroke();
                 
-                // 基準中心紅點
+                // 花苗基準中心紅點
                 ctx.beginPath(); ctx.arc(pt.x, pt.y, 4, 0, 2 * Math.PI); ctx.fillStyle = 'red'; ctx.fill();
                 
                 ctx.fillStyle = '#7f8c8d'; ctx.font = '12px sans-serif';
-                ctx.fillText("花苗 " + (i+1), pt.x - 18, pt.y - rOuterPixels - 6);
+                ctx.fillText("最佳化花苗 " + (i+1), pt.x - 30, pt.y - rOuterPixels - 6);
             }
 
-            // 2. 🌟 新增：將 20m 紅色實線光圈移到「主站點節點」的外圍
-            // 讓它繪製在路徑線條下層，確保不遮擋點本身
+            // 2. 節點下層：繪製各個主站點外圍的 20m 紅色實線圈
             for (var i = 0; i < finalPathPoints.length; i++) {
-                if (!finalPathPoints[i].isExtraStep) { // 僅針對主站點繪製 20m 光圈
+                if (!finalPathPoints[i].isExtraStep) {
                     var pt = toCanvasCoords(finalPathPoints[i].lat, finalPathPoints[i].lng);
                     ctx.beginPath(); 
                     ctx.arc(pt.x, pt.y, rPersonPixels, 0, 2 * Math.PI);
-                    ctx.strokeStyle = 'rgba(231, 76, 60, 0.45)'; // 紅色實線
-                    ctx.lineWidth = 1.2; 
-                    ctx.stroke();
+                    ctx.strokeStyle = 'rgba(231, 76, 60, 0.45)'; 
+                    ctx.lineWidth = 1.2; ctx.stroke();
                 }
             }
-            ctx.lineWidth = 1; // 重設線寬
+            ctx.lineWidth = 1; 
             
-            // 3. 中層：繪製橘色圓滑曲線路徑
+            // 3. 中層：繪製橘色流暢曲線路徑線段
             if (finalPathPoints.length > 1) {
                 ctx.beginPath(); ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 2.5;
                 for (var i = 0; i < finalPathPoints.length; i++) {
@@ -261,7 +265,7 @@
                 ctx.stroke();
             }
             
-            // 4. 最頂層：繪製走法主站點（黃色實心點）與數字
+            // 4. 最頂層：繪製主站點實心圓點（半徑 5 / 直徑 10）與數字，確保完全在最外層
             var mainNodeCount = 1;
             for (var i = 0; i < finalPathPoints.length; i++) {
                 var pt = toCanvasCoords(finalPathPoints[i].lat, finalPathPoints[i].lng);
@@ -269,7 +273,6 @@
                 if (finalPathPoints[i].isExtraStep) {
                     ctx.arc(pt.x, pt.y, 2.5, 0, 2 * Math.PI); ctx.fillStyle = 'rgba(127,137,141,0.6)'; ctx.fill();
                 } else {
-                    // 主站點半徑為 5 (直徑 10)，會完美落在紅色光圈的正中心最上層
                     if (mainNodeCount === 1 || i === finalPathPoints.length - 1) {
                         ctx.arc(pt.x, pt.y, 6.5, 0, 2 * Math.PI); ctx.fillStyle = '#2ecc71'; ctx.strokeStyle = '#27ae60';
                     } else {
@@ -440,7 +443,7 @@
         }
 
         window.dl_JoyStick = function() { var g = generateBaseGPX('wpt', 'JoyStick'); if(g) executeDownload('JoyStick_Route.gpx', g); };
-        window.dl_EasyGPS = function() { var g = generateBaseGPX('wpt', 'EasyGPS'); if(g) executeDownload('EasyGPS_Route.gpx', g); };
+        window.dl_EasyGPS = function() { var gpx = generateBaseGPX('wpt', 'EasyGPS'); if(gpx) executeDownload('EasyGPS_Route.gpx', gpx); };
         window.dl_Flashman = function() { var g = generateBaseGPX('wpt', 'Flashman'); if(g) executeDownload('Flashman_Route.gpx', g); };
         window.dl_魅影 = function() { var g = generateBaseGPX('wpt', 'GhostGPS'); if(g) executeDownload('魅影_Route.gpx', g); };
         window.dl_iAnyGo = function() { var g = generateBaseGPX('trk', 'iAnyGo'); if(g) executeDownload('iAnyGo_Route.gpx', g); };
@@ -458,18 +461,18 @@
 </div>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 自由線段插點編輯器 (節點隨動紅色光圈版)</h2>
+    <h2>🗺️ 地圖光圈 - 自由線段插點編輯器 (自動最短路徑最佳化版)</h2>
     
     <div class="color-legend">
         <div class="legend-item"><span class="box-red-line"></span> <span style="color:#e74c3c; font-weight:bold;">━ 實線圈：人物光圈 20m (隨主站點移動)</span></div>
         <div class="legend-item"><span class="box-black"></span> <span>━ 實線圈：花苗固定內圈 30m</span></div>
         <div class="legend-item"><span class="box-blue"></span> <span>━ 實線圈：偏移參考外圈 55m</span></div>
-        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由走法路徑 (黃色節點為中心擴散紅色光圈)</span></div>
+        <div class="legend-item"><span style="color:#e67e22; font-weight:bold;">━</span> <span>自由走法路徑 (載入時自動計算不交叉的最短順序)</span></div>
     </div>
 
     <div class="flex-grid">
         <div class="col">
-            <label><b>📥 原始中心點座標 (花苗基準)</b></label>
+            <label><b>📥 原始中心點座標 (花苗基準 - 系統會自動重新排序)</b></label>
             <textarea id="inputCoords" placeholder="請貼上原始經緯度座標...&#10;格式如：25.123456,121.123456"></textarea>
         </div>
         
@@ -480,7 +483,7 @@
     </div>
 
     <div class="btn-group">
-        <button class="btn-primary" onclick="window.startProcess()">🚀 讀取/生成流暢外圈路徑</button>
+        <button class="btn-primary" onclick="window.startProcess()">🚀 讀取並排列最佳化最短路徑</button>
         <button class="btn-info" onclick="window.extendEndsBy1Meter()">📏 ➕ 起終點各外延 1 公尺</button>
         <button class="btn-secondary" onclick="window.resetView()">🏠 重設地圖視角</button>
         <button class="btn-success" onclick="window.copyResult()">📋 複製文字座標</button>
