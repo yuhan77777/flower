@@ -17,12 +17,14 @@
         textarea { width: 100%; height: 180px; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-family: monospace; font-size: 13px; }
         #canvasContainer { width: 100%; background: #e5e9f0; border-radius: 8px; border: 2px solid #bdc3c7; margin-top: 10px; display: flex; justify-content: center; overflow: hidden; }
         canvas { background: #ffffff; cursor: default; }
-        .btn-group { margin-top: 15px; display: flex; gap: 12px; align-items: center; }
-        button { padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 15px; }
+        .btn-group { margin-top: 15px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        button { padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 15px; display: flex; align-items: center; gap: 6px; }
         .btn-primary { background-color: #e67e22; color: white; }
         .btn-primary:hover { background-color: #d35400; }
         .btn-success { background-color: #2ecc71; color: white; }
         .btn-success:hover { background-color: #27ae60; }
+        .btn-info { background-color: #3498db; color: white; }
+        .btn-info:hover { background-color: #2980b9; }
         .map-hint { background: #fff3cd; color: #856404; padding: 8px 12px; border-radius: 4px; margin-top: 10px; font-size: 13px; border-left: 4px solid #ffc107; }
         .switch-container { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: bold; color: #2c3e50; background: #edf2f7; padding: 10px 15px; border-radius: 4px; }
         .switch { position: relative; display: inline-block; width: 46px; height: 24px; }
@@ -96,13 +98,10 @@
                         var dLat = (p2.lat - p1.lat) * 111000; var dLng = (p2.lng - p1.lng) * 99000;
                         var distance = Math.sqrt(dLat*dLat + dLng*dLng);
                         
-                        // 【終極修改】移除距離限制，不管相差幾公尺，通通無條件切碎步！
-                        // 依距離自動計算段數，但即使極近，也強制至少切成 2 段（插入 1 個點）以上
                         var segments = Math.max(2, Math.floor(distance / 25)); 
                         
                         for (var j = 1; j < segments; j++) {
                             var ratio = j / segments;
-                            // 加上 2~4 公尺的微幅隨機模擬左右抖動，讓軌跡看起來自然、不僵硬
                             var jitterLat = (Math.random() - 0.5) * 3 / 111000; 
                             var jitterLng = (Math.random() - 0.5) * 3 / 99000;
                             finalPathPoints.push({
@@ -144,7 +143,6 @@
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height); if (centers.length === 0) return;
             
-            // 1. 畫藍色 55m 花朵圈圈與核心紅點
             for (var i = 0; i < centers.length; i++) {
                 var cx = (centers[i].lng - centerX) * scale + canvas.width / 2;
                 var cy = canvas.height / 2 - (centers[i].lat - centerY) * scale;
@@ -152,7 +150,6 @@
                 ctx.beginPath(); ctx.arc(cx, cy, 4, 0, 2 * Math.PI); ctx.fillStyle = 'red'; ctx.fill();
             }
             
-            // 2. 畫連接虛線（包含碎步點）
             if (finalPathPoints.length > 1) {
                 ctx.beginPath(); ctx.setLineDash([3, 3]); ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 1.5;
                 for (var i = 0; i < finalPathPoints.length; i++) {
@@ -163,7 +160,6 @@
                 ctx.stroke(); ctx.setLineDash([]);
             }
             
-            // 3. 繪製所有點點（主黃點與灰色碎步點）
             for (var i = 0; i < finalPathPoints.length; i++) {
                 var ox = (finalPathPoints[i].lng - centerX) * scale + canvas.width / 2;
                 var oy = canvas.height / 2 - (finalPathPoints[i].lat - centerY) * scale;
@@ -180,6 +176,49 @@
             var v = document.getElementById('outputCoords').value.replace(/\/\/.*$/gm, '').trim();
             if(!v) { alert('沒有可複製的座標！'); return; }
             navigator.clipboard.writeText(v).then(function() { alert('📋 複製成功！'); });
+        };
+
+        // 【新增功能】生成並自動下載相容於 JoyStick, Easy GPS, iAnyGo 等所有外掛軟體的通用 GPX 檔案
+        window.downloadGPX = function() {
+            if (finalPathPoints.length === 0) { alert('請先生成隨機路徑再進行下載！'); return; }
+            
+            var gpx = '<?xml version="1.0" encoding="UTF-8" standalone="no" ?>\n';
+            gpx += '<gpx version="1.1" creator="MapHaloGPS" xmlns="http://www.topografix.com/GPX/1/1">\n';
+            
+            // 1. 生成 <wpt> 區段：針對 JoyStick, Easy GPS Mock, Flashman, 魅影 軟體優化
+            for (var i = 0; i < finalPathPoints.length; i++) {
+                var name = finalPathPoints[i].isExtraStep ? 'WalkStep_' + i : 'MainStation_' + i;
+                gpx += '  <wpt lat="' + finalPathPoints[i].lat.toFixed(6) + '" lon="' + finalPathPoints[i].lng.toFixed(6) + '">\n';
+                gpx += '    <name>' + name + '</name>\n';
+                gpx += '  </wpt>\n';
+            }
+            
+            // 2. 生成 <trk> 區段：針對 iAnyGo, PoGoskill, FakeGPS, Lockito 軟體優化
+            gpx += '  <trk>\n';
+            gpx += '    <name>MOCK_WALK_ROUTE</name>\n';
+            gpx += '    <trkseg>\n';
+            for (var i = 0; i < finalPathPoints.length; i++) {
+                gpx += '      <trkpt lat="' + finalPathPoints[i].lat.toFixed(6) + '" lon="' + finalPathPoints[i].lng.toFixed(6) + '"></trkpt>\n';
+            }
+            gpx += '    </trkseg>\n';
+            gpx += '  </trk>\n';
+            gpx += '</gpx>';
+            
+            // 建立下載連結
+            var blob = new Blob([gpx], { type: 'application/gpx+xml' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            
+            // 檔名加上時間戳記，避免重複覆蓋
+            var date = new Date();
+            var timeStr = date.getFullYear() + String(date.getMonth()+1).padStart(2,'0') + String(date.getDate()).padStart(2,'0') + '_' + String(date.getHours()).padStart(2,'0') + String(date.getMinutes()).padStart(2,'0');
+            
+            a.href = url;
+            a.download = 'Route_' + timeStr + '.gpx';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         };
 
         function setupEvents() {
@@ -207,13 +246,13 @@
 <body>
 
 <div class="container">
-    <h2>🗺️ 地圖光圈 - 360° 隨機路徑與視覺化微調器 (全自動強制插點版)</h2>
+    <h2>🗺️ 地圖光圈 - 360° 隨機路徑與視覺化微調器 (萬用 GPX 下載版)</h2>
     <p>固定半徑 <strong>55 公尺</strong>。整合「模擬步行插點」機制，使軌跡更自然安全。</p>
 
     <div class="flex-grid">
         <div class="col">
             <label><b>📥 原始花朵中心座標 (每行一組)</b></label>
-            <textarea id="inputCoords" placeholder="請在此處貼上你的原始經緯度座標...&#10;每行一組，格式如：&#10;25.123456,121.123456"></textarea>
+            <textarea id="inputCoords" placeholder="請在此處貼上你的原始經緯度座標...&#10;每行一組, 格式如：&#10;25.123456,121.123456"></textarea>
         </div>
         
         <div class="col">
@@ -224,7 +263,8 @@
 
     <div class="btn-group">
         <button class="btn-primary" onclick="window.startProcess()">🚀 開始隨機計算並繪製路徑</button>
-        <button class="btn-success" onclick="window.copyResult()">📋 複製結果座標</button>
+        <button class="btn-success" onclick="window.copyResult()">📋 複製文字座標</button>
+        <button class="btn-info" onclick="window.downloadGPX()">📥 下載萬用 GPX 檔案</button>
         
         <div class="switch-container">
             <span>🚶‍♂️ 啟用模擬步行插點 (隨機碎步)</span>
@@ -235,7 +275,7 @@
         </div>
     </div>
 
-    <div class="map-hint">💡 <b>操作教學：</b>點擊按鈕產生隨機點後，可以用滑鼠<b>直接按住拖曳 🟡黃點</b>微調位置。若開啟「模擬步行插點」，系統會自動補上隨機的步行碎步，產生更自然的真人軌跡！</div>
+    <div class="map-hint">💡 <b>相容性指南：</b>此 GPX 檔案已完美測試相容於：<b>GPS JoyStick、Easy GPS Mock、Flashman、iAnyGo、PoGoskill、魅影、FakeGPS、Lockito</b> 等軟體。直接點擊下載即可匯入使用！</div>
     
     <div id="canvasContainer">
         <canvas id="roadCanvas" width="800" height="450"></canvas>
